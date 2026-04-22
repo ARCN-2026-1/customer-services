@@ -29,6 +29,7 @@ Servicio encargado de gestionar clientes, autenticación básica del MVP y valid
 - `test/` — tests unitarios e integración
 - `scripts/validate.sh` — validación canónica del servicio
 - `Dockerfile` — imagen local del servicio
+- `docker-compose.yml` — stack local con API + RabbitMQ
 
 ## Comandos útiles
 
@@ -60,6 +61,44 @@ Endpoints principales del MVP:
 
 - `docs/service-overview.md` — overview funcional y técnico del servicio
 - `docs/ddd/customer-context.md` — contexto DDD relevante del servicio
+
+## Docker local
+
+Para desarrollo local con la configuración runtime actual, el repo incluye un `docker-compose.yml`
+que levanta:
+
+- `customer-service`
+- `rabbitmq`
+
+### Levantar el stack
+
+```bash
+docker compose up --build -d
+```
+
+### Bajar el stack
+
+```bash
+docker compose down
+```
+
+Si además querés limpiar el volumen de RabbitMQ:
+
+```bash
+docker compose down -v
+```
+
+### Variables que compose resuelve
+
+- `CUSTOMER_SERVICE_DATABASE_URL=sqlite:///./data/customer-service.sqlite`
+- `CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND=rabbitmq`
+- `CUSTOMER_SERVICE_RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/%2F`
+- `CUSTOMER_SERVICE_RABBITMQ_EXCHANGE=customer.events`
+
+### Verificación rápida
+
+- API health: `http://localhost:8000/health`
+- RabbitMQ management: `http://localhost:15672` (`guest` / `guest`)
 
 ## Notas
 
