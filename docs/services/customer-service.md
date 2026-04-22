@@ -399,8 +399,8 @@ docker compose down -v
 
 ### Persistencia SQLite
 
-- la base SQLite sigue viviendo en `services/customer-service/data/`
-- compose monta `./services/customer-service/data:/app/data`
+- la base SQLite vive en `./data/`
+- compose monta `./data:/app/data`
 - el archivo esperado dentro del contenedor es `./data/customer-service.sqlite`
 
 ### Variables relevantes en compose
