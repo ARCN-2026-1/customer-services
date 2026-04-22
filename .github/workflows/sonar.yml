@@ -1,0 +1,57 @@
+name: SonarCloud
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  sonarcloud:
+    name: SonarCloud Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect Python app and tests
+        id: python-layout
+        shell: bash
+        run: |
+          if [ -d internal ] && [ -d test ] && [ -f pyproject.toml ]; then
+            echo "has_python_layout=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_python_layout=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install uv
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate coverage report
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        run: |
+          uv sync --dev
+          uv run pytest --cov=internal --cov-report=xml:coverage.xml --cov-report=term-missing
+
+      - name: SonarCloud scan with coverage
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        uses: SonarSource/sonarqube-scan-action@v7
+        with:
+          args: -Dsonar.python.coverage.reportPaths=coverage.xml
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: SonarCloud scan without coverage
+        if: steps.python-layout.outputs.has_python_layout != 'true'
+        uses: SonarSource/sonarqube-scan-action@v7
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

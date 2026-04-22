@@ -1,0 +1,61 @@
+name: Python Quality
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  python-quality:
+    name: Python Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect Python app and tests
+        id: python-layout
+        shell: bash
+        run: |
+          if [ -d internal ] && [ -d test ] && [ -f main.py ] && [ -f pyproject.toml ]; then
+            echo "has_python_layout=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_python_layout=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install uv
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        run: uv sync --dev
+
+      - name: Ruff
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        run: uv run ruff check .
+
+      - name: Black check
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        run: uv run black --check .
+
+      - name: Pyright
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        run: uv run pyright
+
+      - name: Pytest
+        if: steps.python-layout.outputs.has_python_layout == 'true'
+        run: uv run pytest --cov=internal --cov-report=term-missing
+
+      - name: Skip bootstrap-only revision
+        if: steps.python-layout.outputs.has_python_layout != 'true'
+        run: |
+          echo "Python service layout is not complete yet; skipping quality gates for bootstrap revision."
