@@ -266,9 +266,7 @@ def test_When_ActivatingInactiveCustomer_Expect_StatusUpdatedAndEventPublished()
     ]
 
 
-def test_When_UpdatingCustomerInfo_Expect_UpdatedCustomerReturnedWithoutPasswordHash() -> (
-    None
-):
+def test_When_UpdatingCustomerInfo_Expect_UpdatedCustomerReturnedWithoutPasswordHash():
     # Arrange
     customer = build_customer(name="Jane Doe", phone="+57-3000000000")
     repository = InMemoryCustomerRepository(customers=[customer])
