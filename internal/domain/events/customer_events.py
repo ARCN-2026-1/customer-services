@@ -53,8 +53,8 @@ class CustomerSuspensionResolved:
 @dataclass(frozen=True, slots=True)
 class CustomerValidationResult:
     event_id: UUID
+    event_type: str
     booking_id: UUID
     customer_id: UUID
     is_valid: bool
     timestamp: datetime
-    event_type: str = "CustomerValidationResult"

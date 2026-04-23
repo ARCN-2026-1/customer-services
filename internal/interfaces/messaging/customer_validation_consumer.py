@@ -76,6 +76,7 @@ class CustomerValidationConsumer:
     ) -> CustomerValidationResult:
         return CustomerValidationResult(
             event_id=uuid4(),
+            event_type=message.event_type,
             booking_id=message.booking_id,
             customer_id=message.customer_id,
             is_valid=is_valid,
