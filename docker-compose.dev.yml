@@ -1,0 +1,56 @@
+services:
+  customer-service:
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      CUSTOMER_SERVICE_DATABASE_URL: mysql+pymysql://customer_app:customer_app_secret@mysql:3306/customer_service?charset=utf8mb4
+      CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND: rabbitmq
+      CUSTOMER_SERVICE_RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+      CUSTOMER_SERVICE_RABBITMQ_EXCHANGE: customer.events
+      CUSTOMER_SERVICE_JWT_SECRET: local-dev-secret
+    ports:
+      - "8000:8000"
+
+  mysql:
+    image: mysql:8.4
+    container_name: customer-service-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: customer_service
+      MYSQL_USER: customer_app
+      MYSQL_PASSWORD: customer_app_secret
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: customer-service-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  rabbitmq-data:

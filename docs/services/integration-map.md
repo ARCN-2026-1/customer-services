@@ -128,8 +128,9 @@ Cada servicio debe documentar:
 ### ¿Necesita otros servicios o eventos para funcionar?
 
 - **No**, no depende de otros microservicios de negocio para operar.
+- `customer-service` usa MySQL con schema dedicado y RabbitMQ como infraestructura propia.
 - **Sí** depende de infraestructura propia del entorno:
-  - SQLite
+  - MySQL con schema dedicado `customer_service`
   - RabbitMQ para publicación de eventos
 
 ### Endpoints que expone para otros servicios
@@ -156,7 +157,9 @@ Por ahora, ninguno.
 
 ### Eventos que consume de otros servicios
 
-Por ahora, ninguno.
+| Evento | Servicio emisor | Propósito |
+| --- | --- | --- |
+| `BookingCreated` | `booking-service` | disparar la validación asíncrona del cliente y responder con `CustomerValidationResult` |
 
 ---
 
