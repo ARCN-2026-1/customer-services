@@ -19,11 +19,13 @@ class RabbitMQCustomerValidationConsumer:
         request_exchange: str,
         request_routing_key: str,
         input_queue: str,
+        request_exchange_type: str = "direct",
         handler: CustomerValidationConsumer,
         event_publisher: EventPublisher,
     ) -> None:
         self.connection_factory = connection_factory
         self.request_exchange = request_exchange
+        self.request_exchange_type = request_exchange_type
         self.request_routing_key = request_routing_key
         self.input_queue = input_queue
         self._handler = handler
@@ -35,7 +37,7 @@ class RabbitMQCustomerValidationConsumer:
             channel = connection.channel()
             channel.exchange_declare(
                 exchange=self.request_exchange,
-                exchange_type="topic",
+                exchange_type=self.request_exchange_type,
                 durable=True,
             )
             channel.queue_declare(queue=self.input_queue, durable=True)

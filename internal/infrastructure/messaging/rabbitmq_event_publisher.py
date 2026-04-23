@@ -59,11 +59,13 @@ class RabbitMQEventPublisher:
         *,
         connection_factory: Callable[[], Any],
         exchange_name: str,
+        exchange_type: str = "topic",
         routing_key: str | None = None,
         properties_factory: Any | None = None,
     ) -> None:
         self._connection_factory = connection_factory
         self._exchange_name = exchange_name
+        self._exchange_type = exchange_type
         self._routing_key = routing_key
         self._properties_factory = properties_factory or _build_message_properties
 
@@ -76,7 +78,7 @@ class RabbitMQEventPublisher:
             channel = connection.channel()
             channel.exchange_declare(
                 exchange=self._exchange_name,
-                exchange_type="topic",
+                exchange_type=self._exchange_type,
                 durable=True,
             )
             channel.basic_publish(

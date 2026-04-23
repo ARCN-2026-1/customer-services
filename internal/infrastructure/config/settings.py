@@ -1,25 +1,78 @@
 from urllib.parse import quote_plus
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class CustomerServiceSettings(BaseSettings):
-    database_url: str | None = None
-    db_host: str | None = None
-    db_port: int = 3306
-    db_user: str | None = None
-    db_password: str | None = None
-    db_name: str | None = None
+    database_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CUSTOMER_SERVICE_DATABASE_URL", "DATABASE_URL"),
+    )
+    db_host: str | None = Field(
+        default="localhost",
+        validation_alias=AliasChoices(
+            "CUSTOMER_SERVICE_DB_HOST", "DB_HOST", "MYSQL_HOST"
+        ),
+    )
+    db_port: int = Field(
+        default=3306,
+        validation_alias=AliasChoices(
+            "CUSTOMER_SERVICE_DB_PORT", "DB_PORT", "MYSQL_LOCAL_PORT"
+        ),
+    )
+    db_user: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CUSTOMER_SERVICE_DB_USER", "DB_USER", "MYSQL_USER"),
+    )
+    db_password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "CUSTOMER_SERVICE_DB_PASSWORD", "DB_PASSWORD", "MYSQL_PASSWORD"
+        ),
+    )
+    db_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CUSTOMER_SERVICE_DB_NAME", "DB_NAME", "MYSQL_DATABASE"),
+    )
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"
     jwt_expiration_seconds: int = 1800
     event_publisher_backend: str = "rabbitmq"
-    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/%2F"
+    rabbitmq_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CUSTOMER_SERVICE_RABBITMQ_URL", "RABBITMQ_URL"),
+    )
+    rabbitmq_host: str = Field(
+        default="localhost",
+        validation_alias=AliasChoices("CUSTOMER_SERVICE_RABBITMQ_HOST", "RABBITMQ_HOST"),
+    )
+    rabbitmq_port: int = Field(
+        default=5672,
+        validation_alias=AliasChoices("CUSTOMER_SERVICE_RABBITMQ_PORT", "RABBITMQ_PORT"),
+    )
+    rabbitmq_user: str = Field(
+        default="guest",
+        validation_alias=AliasChoices(
+            "CUSTOMER_SERVICE_RABBITMQ_USER",
+            "RABBITMQ_USER",
+            "RABBITMQ_DEFAULT_USER",
+        ),
+    )
+    rabbitmq_password: str = Field(
+        default="guest",
+        validation_alias=AliasChoices(
+            "CUSTOMER_SERVICE_RABBITMQ_PASSWORD",
+            "RABBITMQ_PASSWORD",
+            "RABBITMQ_DEFAULT_PASS",
+        ),
+    )
     rabbitmq_input_queue: str = "customer.validation.requests"
     rabbitmq_request_exchange: str = "customer.exchange"
+    rabbitmq_request_exchange_type: str = "direct"
     rabbitmq_request_routing_key: str = "customer.request"
     rabbitmq_response_exchange: str = "customer.exchange"
+    rabbitmq_response_exchange_type: str = "direct"
     rabbitmq_response_routing_key: str = "customer.response.key"
 
     @field_validator("event_publisher_backend")
@@ -28,6 +81,15 @@ class CustomerServiceSettings(BaseSettings):
         if value not in {"rabbitmq", "in-memory"}:
             raise ValueError(
                 "event_publisher_backend must be 'rabbitmq' or 'in-memory'"
+            )
+        return value
+
+    @field_validator("rabbitmq_request_exchange_type", "rabbitmq_response_exchange_type")
+    @classmethod
+    def validate_exchange_type(cls, value: str) -> str:
+        if value not in {"direct", "topic", "fanout", "headers"}:
+            raise ValueError(
+                "rabbitmq exchange type must be one of direct, topic, fanout, headers"
             )
         return value
 
@@ -55,4 +117,21 @@ class CustomerServiceSettings(BaseSettings):
             f"@{self.db_host}:{self.db_port}/{self.db_name}?charset=utf8mb4"
         )
 
-    model_config = SettingsConfigDict(env_prefix="CUSTOMER_SERVICE_")
+    @property
+    def resolved_rabbitmq_url(self) -> str:
+        if self.rabbitmq_url:
+            return self.rabbitmq_url
+
+        return (
+            "amqp://"
+            f"{quote_plus(self.rabbitmq_user)}:{quote_plus(self.rabbitmq_password)}"
+            f"@{self.rabbitmq_host}:{self.rabbitmq_port}/%2F"
+        )
+
+    model_config = SettingsConfigDict(
+        env_prefix="CUSTOMER_SERVICE_",
+        env_file=(".env", ".env.local"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )

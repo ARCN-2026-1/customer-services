@@ -11,7 +11,8 @@ from internal.application.errors import CustomerNotFoundError
 from internal.domain.events.customer_events import CustomerValidationResult
 from internal.interfaces.messaging.contracts import BookingCreatedMessage
 
-EXPECTED_EVENT_TYPE = "BookingCreated"
+ACCEPTED_EVENT_TYPES = frozenset({"BookingCreated", "BOOKING_Ok"})
+RESPONSE_EVENT_TYPE = "BOOKING_Ok"
 logger = logging.getLogger(__name__)
 
 
@@ -65,7 +66,7 @@ class CustomerValidationConsumer:
         )
 
     def _validate_event_type(self, event_type: str) -> None:
-        if event_type != EXPECTED_EVENT_TYPE:
+        if event_type not in ACCEPTED_EVENT_TYPES:
             raise ValueError(f"Unsupported event type: {event_type}")
 
     def _build_result_event(
@@ -76,7 +77,7 @@ class CustomerValidationConsumer:
     ) -> CustomerValidationResult:
         return CustomerValidationResult(
             event_id=uuid4(),
-            event_type=message.event_type,
+            event_type=RESPONSE_EVENT_TYPE,
             booking_id=message.booking_id,
             customer_id=message.customer_id,
             is_valid=is_valid,

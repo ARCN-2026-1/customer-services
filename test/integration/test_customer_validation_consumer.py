@@ -81,6 +81,7 @@ def test_When_ConsumingEligibleBookingCreatedEvent_Expect_ResultPublished(
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
                 exchange_name="customer.exchange",
+                exchange_type="direct",
                 routing_key="customer.response.key",
             ),
         )
@@ -91,7 +92,7 @@ def test_When_ConsumingEligibleBookingCreatedEvent_Expect_ResultPublished(
             body=json.dumps(
                 {
                     "eventId": str(uuid4()),
-                    "eventType": "BookingCreated",
+                    "eventType": "BOOKING_Ok",
                     "bookingId": str(booking_id),
                     "customerId": str(customer_id),
                     "timestamp": "2026-04-22T00:00:00+00:00",
@@ -110,7 +111,7 @@ def test_When_ConsumingEligibleBookingCreatedEvent_Expect_ResultPublished(
     assert published_message["routing_key"] == "customer.response.key"
     published_payload = json.loads(published_message["body"])
     assert UUID(published_payload["eventId"])
-    assert published_payload["eventType"] == "BookingCreated"
+    assert published_payload["eventType"] == "BOOKING_Ok"
     assert published_payload["bookingId"] == str(booking_id)
     assert published_payload["customerId"] == str(customer_id)
     assert published_payload["isValid"] is True
@@ -155,6 +156,7 @@ def test_When_ValidatedCustomerIsMissing_Expect_InvalidResultPublished(
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
                 exchange_name="customer.exchange",
+                exchange_type="direct",
                 routing_key="customer.response.key",
             ),
         )
@@ -240,6 +242,7 @@ def test_When_ExistingCustomerIsInactive_Expect_InvalidResultPublished(
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
                 exchange_name="customer.exchange",
+                exchange_type="direct",
                 routing_key="customer.response.key",
             ),
         )
@@ -310,6 +313,7 @@ def test_When_RequestPayloadIsMalformed_Expect_DiscardedWithoutPublishing(
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
                 exchange_name="customer.exchange",
+                exchange_type="direct",
                 routing_key="customer.response.key",
             ),
         )
@@ -374,6 +378,7 @@ def test_When_UseCaseFailsUnexpectedly_Expect_MessageRequeued(
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
                 exchange_name="customer.exchange",
+                exchange_type="direct",
                 routing_key="customer.response.key",
             ),
         )
@@ -437,7 +442,7 @@ def _build_rabbitmq_url(connection_params: Any) -> str:
 def _declare_response_queue(channel: Any) -> str:
     channel.exchange_declare(
         exchange="customer.exchange",
-        exchange_type="topic",
+        exchange_type="direct",
         durable=True,
     )
     response_queue = channel.queue_declare(

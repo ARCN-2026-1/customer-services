@@ -424,12 +424,31 @@ Capas reales del repo:
   - el test usa Docker + Testcontainers para levantar un broker RabbitMQ real
   - si Docker no está disponible, el test hace `skip` explícito con el motivo para mantener la suite determinística
 
-## Docker local
+## Docker
+
+### Deploy / servidor (app-only)
+
+`docker-compose.yml` es la base de despliegue del servicio `customer-service`.
+
+Incluye:
+
+- `restart: unless-stopped`
+- mapeo de puerto configurable (`${CUSTOMER_SERVICE_PORT:-8000}:8000`)
+- healthcheck HTTP (`/health`)
+- variables runtime por placeholders (`CUSTOMER_SERVICE_*`, `MYSQL_*`, `RABBITMQ_*`) sin secretos hardcodeados
+
+Comando sugerido (archivo de entorno no versionado):
+
+```bash
+docker compose --env-file .env.deploy -f docker-compose.yml up -d
+```
+
+### Local development
 
 Para demo y desarrollo local simple, el repo incluye en la raíz:
 
-- `docker-compose.yml` — compose base orientado solo a `customer-service`
-- `docker-compose.dev.yml` — overrides con infraestructura local y puertos
+- `docker-compose.yml` — compose base app-only (reutilizable en deploy)
+- `docker-compose.dev.yml` — overlay con infraestructura local y puertos
 
 Usados juntos levantan:
 
@@ -469,21 +488,32 @@ El schema usa charset `utf8mb4` y collation `utf8mb4_0900_ai_ci`.
 
 ### Variables relevantes en compose
 
-- `CUSTOMER_SERVICE_DATABASE_URL=mysql+pymysql://customer_app:customer_app_secret@mysql:3306/customer_service?charset=utf8mb4`
-- `CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND=rabbitmq`
-- `CUSTOMER_SERVICE_RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/%2F`
-- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_EXCHANGE=customer.exchange`
-- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_ROUTING_KEY=customer.request`
-- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_EXCHANGE=customer.exchange`
-- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_ROUTING_KEY=customer.response.key`
+- `CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND=${CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND:-rabbitmq}`
+- `CUSTOMER_SERVICE_JWT_SECRET=${CUSTOMER_SERVICE_JWT_SECRET:-local-dev-secret}`
+- `MYSQL_HOST=mysql`
+- `MYSQL_DATABASE=${MYSQL_DATABASE:-customer_service}`
+- `MYSQL_USER=${MYSQL_USER:-customer_app}`
+- `MYSQL_PASSWORD=${MYSQL_PASSWORD:-customer_app_local}`
+- `MYSQL_LOCAL_PORT=${MYSQL_LOCAL_PORT:-3306}`
+- `RABBITMQ_HOST=rabbitmq`
+- `RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER:-guest}`
+- `RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS:-guest}`
+- `RABBITMQ_PORT=${RABBITMQ_PORT:-5672}`
+- `RABBITMQ_UI_PORT=${RABBITMQ_UI_PORT:-15672}`
+
+`MYSQL_ROOT_PASSWORD` aplica al contenedor MySQL local (infra), no a la lógica runtime del servicio.
+
+En deploy se pueden usar las variantes por URL completa (`CUSTOMER_SERVICE_DATABASE_URL`, `CUSTOMER_SERVICE_RABBITMQ_URL`) para evitar duplicar variables.
+
+Para evitar credenciales en git, usá `.env.local` (no versionado) para tus valores reales.
 
 ### Verificación rápida
 
 - API health: `http://localhost:8000/health`
-- MySQL: `localhost:3306` (`customer_app` / `customer_app_secret`, schema `customer_service`)
-- RabbitMQ management: `http://localhost:15672` (`guest` / `guest`)
+- MySQL: `localhost:${MYSQL_LOCAL_PORT:-3306}` (credenciales tomadas de tus variables locales)
+- RabbitMQ management: `http://localhost:${RABBITMQ_UI_PORT:-15672}` (credenciales tomadas de tus variables locales)
 
 ### Notas
 
-- esta configuración está pensada para entorno local, demo y desarrollo, no para producción
-- la app no arranca MySQL ni RabbitMQ desde el compose base; esos servicios viven en `docker-compose.dev.yml`
+- `docker-compose.dev.yml` sigue siendo la capa de infraestructura local
+- el compose base no arranca MySQL ni RabbitMQ; esos servicios viven en `docker-compose.dev.yml`

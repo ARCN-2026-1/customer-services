@@ -95,6 +95,61 @@ def test_When_MySqlSettingsAreIncomplete_Expect_ResolvedDatabaseUrlFailsFast() -
         _ = settings.resolved_database_url
 
 
+def test_When_UsingDeploymentMySqlEnvNames_Expect_SettingsResolveDatabaseUrl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    monkeypatch.delenv("CUSTOMER_SERVICE_DATABASE_URL", raising=False)
+    monkeypatch.setenv("MYSQL_DATABASE", "customer_service")
+    monkeypatch.setenv("MYSQL_USER", "customer_app")
+    monkeypatch.setenv("MYSQL_PASSWORD", "super-secret")
+    monkeypatch.setenv("MYSQL_LOCAL_PORT", "3308")
+
+    # Act
+    settings = CustomerServiceSettings()
+
+    # Assert
+    assert settings.resolved_database_url == (
+        "mysql+pymysql://customer_app:super-secret@localhost:3308/"
+        "customer_service?charset=utf8mb4"
+    )
+
+
+def test_When_UsingDeploymentRabbitMqEnvNames_Expect_SettingsResolveRabbitMqUrl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    monkeypatch.delenv("CUSTOMER_SERVICE_RABBITMQ_URL", raising=False)
+    monkeypatch.setenv("RABBITMQ_HOST", "rabbitmq")
+    monkeypatch.setenv("RABBITMQ_DEFAULT_USER", "svc-user")
+    monkeypatch.setenv("RABBITMQ_DEFAULT_PASS", "svc-pass")
+    monkeypatch.setenv("RABBITMQ_PORT", "5673")
+
+    # Act
+    settings = CustomerServiceSettings()
+
+    # Assert
+    assert settings.resolved_rabbitmq_url == "amqp://svc-user:svc-pass@rabbitmq:5673/%2F"
+
+
+def test_When_CustomerServiceRabbitMqUrlIsSet_Expect_ItOverridesDerivedRabbitMqUrl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    monkeypatch.setenv("RABBITMQ_DEFAULT_USER", "svc-user")
+    monkeypatch.setenv("RABBITMQ_DEFAULT_PASS", "svc-pass")
+    monkeypatch.setenv("RABBITMQ_PORT", "5673")
+    monkeypatch.setenv(
+        "CUSTOMER_SERVICE_RABBITMQ_URL", "amqp://guest:guest@localhost:5672/%2F"
+    )
+
+    # Act
+    settings = CustomerServiceSettings()
+
+    # Assert
+    assert settings.resolved_rabbitmq_url == "amqp://guest:guest@localhost:5672/%2F"
+
+
 def test_When_CreatingAppWithReachableMySql_Expect_StartsAfterConnectionCheck(
     monkeypatch,
 ) -> None:
@@ -209,7 +264,7 @@ def test_When_CreatingRabbitMqPublisherAndConsumer_Expect_SharedRabbitMqConfigur
     publisher.publish(
         CustomerValidationResult(
             event_id=uuid4(),
-            event_type="BookingCreated",
+            event_type="BOOKING_Ok",
             booking_id=uuid4(),
             customer_id=uuid4(),
             is_valid=True,
@@ -233,6 +288,20 @@ def test_When_CreatingRabbitMqPublisherAndConsumer_Expect_SharedRabbitMqConfigur
             "exchange": "customer.exchange",
             "queue": "customer.validation.requests",
             "routing_key": "customer.request",
+        }
+    ]
+    assert opened_channels[0].exchange_declarations == [
+        {
+            "exchange": "customer.exchange",
+            "exchange_type": "direct",
+            "durable": True,
+        }
+    ]
+    assert opened_channels[1].exchange_declarations == [
+        {
+            "exchange": "customer.exchange",
+            "exchange_type": "direct",
+            "durable": True,
         }
     ]
     assert consumer.input_queue == "customer.validation.requests"
@@ -407,7 +476,7 @@ def test_When_PublishingValidationResult_Expect_ConfiguredResponseRoutingKeyAndP
     )
     event = CustomerValidationResult(
         event_id=uuid4(),
-        event_type="BookingCreated",
+        event_type="BOOKING_Ok",
         booking_id=uuid4(),
         customer_id=uuid4(),
         is_valid=False,
@@ -422,7 +491,7 @@ def test_When_PublishingValidationResult_Expect_ConfiguredResponseRoutingKeyAndP
     assert channel.published_messages[0]["routing_key"] == "customer.response.key"
     assert json.loads(channel.published_messages[0]["body"]) == {
         "eventId": str(event.event_id),
-        "eventType": "BookingCreated",
+        "eventType": "BOOKING_Ok",
         "bookingId": str(event.booking_id),
         "customerId": str(event.customer_id),
         "isValid": False,
@@ -486,11 +555,18 @@ class RecordingChannel:
         self.nacked_messages: list[dict[str, Any]] = []
         self.published_messages: list[dict[str, Any]] = []
         self.bindings: list[dict[str, Any]] = []
+        self.exchange_declarations: list[dict[str, Any]] = []
 
     def exchange_declare(
         self, *, exchange: str, exchange_type: str, durable: bool
     ) -> None:
-        return None
+        self.exchange_declarations.append(
+            {
+                "exchange": exchange,
+                "exchange_type": exchange_type,
+                "durable": durable,
+            }
+        )
 
     def queue_declare(self, *, queue: str, durable: bool) -> None:
         return None
