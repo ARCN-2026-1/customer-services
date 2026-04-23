@@ -41,6 +41,18 @@ def _event_to_payload(event: object) -> dict[str, Any]:
     }
 
 
+def _resolve_routing_key(payload: dict[str, Any]) -> str:
+    event_type = payload.get("eventType")
+    if isinstance(event_type, str) and event_type:
+        return event_type
+
+    event_name = payload.get("eventName")
+    if isinstance(event_name, str) and event_name:
+        return event_name
+
+    raise KeyError("eventType")
+
+
 class RabbitMQEventPublisher:
     def __init__(
         self,
@@ -55,7 +67,7 @@ class RabbitMQEventPublisher:
 
     def publish(self, event: object) -> None:
         payload = _event_to_payload(event)
-        routing_key = str(payload["eventName"])
+        routing_key = _resolve_routing_key(payload)
         connection = self._connection_factory()
         try:
             channel = connection.channel()

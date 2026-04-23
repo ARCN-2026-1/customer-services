@@ -48,3 +48,13 @@ class CustomerSuspensionResolved:
     customer_id: UUID
     resolved_at: datetime
     event_name: str = "CustomerSuspensionResolved"
+
+
+@dataclass(frozen=True, slots=True)
+class CustomerValidationResult:
+    event_id: UUID
+    booking_id: UUID
+    customer_id: UUID
+    is_valid: bool
+    timestamp: datetime
+    event_type: str = "CustomerValidationResult"
