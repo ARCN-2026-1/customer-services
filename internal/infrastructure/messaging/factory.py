@@ -24,7 +24,8 @@ def create_event_publisher(settings: CustomerServiceSettings) -> Any:
         connection_factory = create_rabbitmq_connection_factory(settings)
         return RabbitMQEventPublisher(
             connection_factory=connection_factory,
-            exchange_name=settings.rabbitmq_exchange,
+            exchange_name=settings.rabbitmq_response_exchange,
+            routing_key=settings.rabbitmq_response_routing_key,
         )
     if settings.event_publisher_backend == "in-memory":
         return InMemoryEventPublisher()
@@ -41,7 +42,8 @@ def create_customer_validation_consumer(
 ) -> RabbitMQCustomerValidationConsumer:
     return RabbitMQCustomerValidationConsumer(
         connection_factory=create_rabbitmq_connection_factory(settings),
-        consumer_exchange=settings.rabbitmq_consumer_exchange,
+        request_exchange=settings.rabbitmq_request_exchange,
+        request_routing_key=settings.rabbitmq_request_routing_key,
         input_queue=settings.rabbitmq_input_queue,
         handler=handler,
         event_publisher=event_publisher,

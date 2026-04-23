@@ -32,7 +32,7 @@ def build_worker_runtime(
     settings: CustomerServiceSettings | None = None,
 ) -> WorkerRuntime:
     resolved_settings = settings or CustomerServiceSettings()
-    session_factory = create_session_factory(resolved_settings.database_url)
+    session_factory = create_session_factory(resolved_settings.resolved_database_url)
     repository = SqlAlchemyCustomerRepository(session_factory)
     handler = CustomerValidationConsumer(ValidateCustomerForReservation(repository))
     event_publisher = create_event_publisher(resolved_settings)

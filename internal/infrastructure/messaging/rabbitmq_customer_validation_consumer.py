@@ -16,13 +16,15 @@ class RabbitMQCustomerValidationConsumer:
         self,
         *,
         connection_factory: Callable[[], Any],
-        consumer_exchange: str,
+        request_exchange: str,
+        request_routing_key: str,
         input_queue: str,
         handler: CustomerValidationConsumer,
         event_publisher: EventPublisher,
     ) -> None:
         self.connection_factory = connection_factory
-        self.consumer_exchange = consumer_exchange
+        self.request_exchange = request_exchange
+        self.request_routing_key = request_routing_key
         self.input_queue = input_queue
         self._handler = handler
         self._event_publisher = event_publisher
@@ -32,15 +34,15 @@ class RabbitMQCustomerValidationConsumer:
         try:
             channel = connection.channel()
             channel.exchange_declare(
-                exchange=self.consumer_exchange,
+                exchange=self.request_exchange,
                 exchange_type="topic",
                 durable=True,
             )
             channel.queue_declare(queue=self.input_queue, durable=True)
             channel.queue_bind(
-                exchange=self.consumer_exchange,
+                exchange=self.request_exchange,
                 queue=self.input_queue,
-                routing_key="BookingCreated",
+                routing_key=self.request_routing_key,
             )
         finally:
             if hasattr(connection, "close"):
