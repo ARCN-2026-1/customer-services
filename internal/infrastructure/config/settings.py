@@ -10,6 +10,8 @@ class CustomerServiceSettings(BaseSettings):
     event_publisher_backend: str = "rabbitmq"
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/%2F"
     rabbitmq_exchange: str = "customer.events"
+    rabbitmq_input_queue: str = "customer.validation.requests"
+    rabbitmq_consumer_exchange: str = "booking.events"
 
     @field_validator("database_url")
     @classmethod
