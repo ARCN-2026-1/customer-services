@@ -4,6 +4,8 @@
 
 Gestionar clientes y su estado dentro del sistema. En el MVP actual, este servicio también resuelve la autenticación básica del usuario, por lo que `Customer` representa tanto al cliente del negocio como al usuario autenticable del sistema.
 
+> Rol de este documento: referencia operativa del servicio. Si buscás contexto breve, empezá por `docs/service-overview.md`. Si buscás el modelo del dominio, seguí con `docs/ddd/customer-context.md`.
+
 ## Alcance del MVP
 
 Además del modelo del dominio definido en el DDD, este servicio incorpora decisiones técnicas para poder operar como MVP funcional:
@@ -30,7 +32,6 @@ Estas decisiones responden a necesidades del MVP y no implican necesariamente la
 - gestionar reservas
 - procesar pagos
 - decidir reglas internas de Booking
-- consumir eventos entrantes en el MVP
 - implementar refresh tokens o revocación compleja
 
 ## Responsabilidades
@@ -52,6 +53,7 @@ Estas decisiones responden a necesidades del MVP y no implican necesariamente la
 
 - `GetCustomerById`
 - `ValidateCustomerForReservation`
+- `CustomerValidationConsumer` (flujo asíncrono disparado por `BookingCreated`)
 
 ### Públicos para autenticación
 
@@ -66,6 +68,12 @@ Estas decisiones responden a necesidades del MVP y no implican necesariamente la
 - `SuspendCustomer`
 - `ResolveCustomerSuspension`
 - `ListCustomers`
+
+## Cómo leer esta documentación
+
+- `docs/service-overview.md` explica el propósito y los límites sin entrar en detalle operativo.
+- Este archivo documenta el runtime real del microservicio: endpoints, eventos, adaptadores, diagramas y bootstrap local.
+- `docs/ddd/customer-context.md` describe el aggregate `Customer`, invariantes y eventos del dominio vigentes en el MVP.
 
 ## Endpoints
 
@@ -227,7 +235,7 @@ No loguea contraseñas ni expone secretos deliberadamente.
 
 ### Adaptadores de salida
 
-- adaptador de persistencia SQLite
+- adaptador de persistencia MySQL
 - adaptador de publicación de eventos
 - adaptador de hash de contraseña
 - adaptador de generación de JWT
@@ -237,6 +245,17 @@ No loguea contraseñas ni expone secretos deliberadamente.
 - `ACTIVE`
 - `INACTIVE`
 - `SUSPENDED`
+
+### Diagrama de transiciones
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE: RegisterCustomer
+    ACTIVE --> INACTIVE: DeactivateCustomer
+    INACTIVE --> ACTIVE: ActivateCustomer
+    ACTIVE --> SUSPENDED: SuspendCustomer
+    SUSPENDED --> ACTIVE: ResolveCustomerSuspension
+```
 
 ## Reglas de transición
 
@@ -318,9 +337,24 @@ Se publica al resolver la suspensión de un cliente suspendido.
 }
 ```
 
+### `CustomerValidationResult`
+
+Se publica cuando el worker consume `BookingCreated` y resuelve si el cliente puede reservar.
+
+```json
+{
+  "eventId": "uuid",
+  "eventType": "BookingCreated",
+  "bookingId": "uuid",
+  "customerId": "uuid",
+  "isValid": true,
+  "timestamp": "timestamp"
+}
+```
+
 ## Eventos que consume
 
-Por ahora no hay eventos obligatorios de entrada para el MVP.
+- `BookingCreated` — dispara la validación asíncrona de elegibilidad y la publicación de `CustomerValidationResult`
 
 ## Reglas de negocio relevantes
 
@@ -337,6 +371,7 @@ Por ahora no hay eventos obligatorios de entrada para el MVP.
 
 - Booking consulta si el cliente está habilitado para reservar
 - Booking consulta datos básicos del cliente
+- Booking puede publicar `BookingCreated` para validación asíncrona
 - Booking reacciona a `CustomerDeactivated`
 - Booking puede reaccionar también a `CustomerSuspended` si la política de negocio futura lo requiere
 
@@ -348,7 +383,26 @@ No depende del JWT del usuario final.
 ### Comunicación
 
 - **síncrona:** consulta de datos y elegibilidad vía REST
-- **asíncrona:** publicación de cambios de estado del cliente mediante eventos RabbitMQ
+- **asíncrona:** consumo de `BookingCreated` y publicación de eventos mediante RabbitMQ
+
+## Arquitectura y layering
+
+```mermaid
+flowchart TD
+    I[Interfaces\nREST API\nMessaging consumer] --> A[Application\nUse cases\nCommands / DTOs]
+    A --> D[Domain\nCustomer aggregate\nValue objects\nDomain events]
+    A --> P[Ports\nCustomerRepository\nEventPublisher\nPasswordHasher\nTokenGenerator]
+    INF[Infrastructure\nSQLAlchemy repository\nMySQL session factory\nRabbitMQ publisher/consumer\nJWT / bcrypt adapters] --> P
+    INF --> DB[(MySQL)]
+    INF --> MQ[(RabbitMQ)]
+```
+
+Capas reales del repo:
+
+- `internal/interfaces/rest` y `internal/interfaces/messaging` — entrada HTTP y mensajería
+- `internal/application` — casos de uso, comandos y DTOs
+- `internal/domain` — aggregate `Customer`, reglas, value objects y eventos
+- `internal/infrastructure` — persistencia MySQL, configuración, auth y RabbitMQ
 
 ## Observaciones de diseño
 
@@ -356,8 +410,8 @@ No depende del JWT del usuario final.
 - si el sistema crece, identidad y autenticación pueden separarse a otro contexto o servicio
 - la auth del MVP no incluye refresh tokens ni revocación compleja
 - los roles básicos del MVP son `customer` y `admin`
-- la base de datos SQLite del servicio se almacena en `services/customer-service/data/customer-service.sqlite`
-- el servicio publica eventos mediante RabbitMQ y no consume eventos entrantes en el MVP
+- la persistencia runtime usa MySQL con un schema dedicado `customer_service`
+- la app HTTP publica eventos mediante RabbitMQ y el worker `consumer.py` procesa `BookingCreated`
 
 ## Validación técnica
 
@@ -370,52 +424,112 @@ No depende del JWT del usuario final.
   - el test usa Docker + Testcontainers para levantar un broker RabbitMQ real
   - si Docker no está disponible, el test hace `skip` explícito con el motivo para mantener la suite determinística
 
-## Docker local
+## Docker
 
-Para demo y desarrollo local simple, el repo incluye un `docker-compose.yml` en la raíz que levanta:
+### Deploy / servidor (runtime del servicio)
 
+`docker-compose.yml` es la base de despliegue del runtime completo de `customer-service`.
+
+Incluye:
+
+- `restart: unless-stopped`
+- job one-shot `customer-migration` que ejecuta `alembic upgrade head`
+- API `customer-service`
+- worker `customer-worker` que ejecuta `consumer.py`
+- mapeo de puerto configurable (`${CUSTOMER_SERVICE_PORT:-8000}:8000`)
+- healthcheck HTTP (`/health`)
+- variables runtime por placeholders (`CUSTOMER_SERVICE_*`, `MYSQL_*`, `RABBITMQ_*`) sin secretos hardcodeados
+- dependencia de arranque para que API y worker esperen a `customer-migration`
+
+Comando sugerido (archivo de entorno no versionado):
+
+```bash
+docker compose --env-file .env.deploy -f docker-compose.yml up -d
+```
+
+### Local development
+
+Para demo y desarrollo local simple, el repo incluye en la raíz:
+
+- `docker-compose.yml` — compose base runtime (`customer-migration`, `customer-service`, `customer-worker`), reutilizable en deploy
+- `docker-compose.dev.yml` — overlay con infraestructura local y puertos
+- `.env.local` — variables de desarrollo local
+- `.env.deploy` — variables para infraestructura externa
+
+Usados juntos levantan:
+
+- `customer-migration`
 - `customer-service`
+- `customer-worker`
+- `mysql`
 - `rabbitmq`
+
+`customer-migration` aplica Alembic automáticamente dentro del stack.
 
 ### Levantar el stack
 
 Desde la raíz del repo:
 
 ```bash
-docker compose up --build -d
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 ### Bajar el stack
 
 ```bash
-docker compose down
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml down
 ```
 
 Si además querés limpiar el volumen nombrado de RabbitMQ:
 
 ```bash
-docker compose down -v
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml down -v
 ```
 
-### Persistencia SQLite
-
-- la base SQLite vive en `./data/`
-- compose monta `./data:/app/data`
-- el archivo esperado dentro del contenedor es `./data/customer-service.sqlite`
+El schema usa charset `utf8mb4` y collation `utf8mb4_0900_ai_ci`.
 
 ### Variables relevantes en compose
 
-- `CUSTOMER_SERVICE_DATABASE_URL=sqlite:///./data/customer-service.sqlite`
-- `CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND=rabbitmq`
-- `CUSTOMER_SERVICE_RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/%2F`
-- `CUSTOMER_SERVICE_RABBITMQ_EXCHANGE=customer.events`
+`customer-migration`, `customer-service` y `customer-worker` comparten el mismo bloque de runtime para evitar drift entre API y worker.
+
+- `CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND=${CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND:-rabbitmq}`
+- `CUSTOMER_SERVICE_JWT_SECRET=${CUSTOMER_SERVICE_JWT_SECRET:-local-dev-secret}`
+- `MYSQL_HOST=mysql`
+- `MYSQL_DATABASE=${MYSQL_DATABASE:-customer_service}`
+- `MYSQL_USER=${MYSQL_USER:-customer_app}`
+- `MYSQL_PASSWORD=${MYSQL_PASSWORD:-customer_app_local}`
+- `MYSQL_LOCAL_PORT=${MYSQL_LOCAL_PORT:-3306}`
+- `RABBITMQ_HOST=rabbitmq`
+- `RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER:-guest}`
+- `RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS:-guest}`
+- `RABBITMQ_PORT=${RABBITMQ_PORT:-5672}`
+- `RABBITMQ_UI_PORT=${RABBITMQ_UI_PORT:-15672}`
+- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_EXCHANGE=customer.exchange`
+- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_EXCHANGE_TYPE=direct`
+- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_ROUTING_KEY=customer.request`
+- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_EXCHANGE=customer.exchange`
+- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_EXCHANGE_TYPE=direct`
+- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_ROUTING_KEY=customer.response.key`
+
+`MYSQL_ROOT_PASSWORD` aplica al contenedor MySQL local (infra), no a la lógica runtime del servicio.
+
+En deploy se pueden usar las variantes por URL completa (`CUSTOMER_SERVICE_DATABASE_URL`, `CUSTOMER_SERVICE_RABBITMQ_URL`) para evitar duplicar variables.
+
+La separación recomendada es:
+
+- `.env.local` para desarrollo local con `docker-compose.dev.yml`
+- `.env.deploy` para despliegue con infraestructura externa
+
+Las variables de contrato de RabbitMQ quedan explícitas en ambos archivos para que el contrato sea auditable sin depender solo de defaults del código.
 
 ### Verificación rápida
 
 - API health: `http://localhost:8000/health`
-- RabbitMQ management: `http://localhost:15672` (`guest` / `guest`)
+- MySQL: `localhost:${MYSQL_LOCAL_PORT:-3306}` (credenciales tomadas de tus variables locales)
+- RabbitMQ management: `http://localhost:${RABBITMQ_UI_PORT:-15672}` (credenciales tomadas de tus variables locales)
+- Worker activo: `docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml logs -f customer-worker`
 
 ### Notas
 
-- esta configuración está pensada para entorno local, demo y desarrollo, no para producción
-- para pruebas administrativas locales puede ser necesario promover manualmente un usuario a rol `admin` en SQLite
+- `docker-compose.dev.yml` sigue siendo la capa de infraestructura local
+- el compose base no arranca MySQL ni RabbitMQ; esos servicios viven en `docker-compose.dev.yml`

@@ -22,7 +22,6 @@ from internal.infrastructure.messaging.factory import (
 from internal.infrastructure.messaging.rabbitmq_event_publisher import (
     RabbitMQEventPublisher,
 )
-from internal.infrastructure.persistence.models import Base
 from internal.infrastructure.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
 )
@@ -32,58 +31,47 @@ from internal.interfaces.messaging.customer_validation_consumer import (
 )
 
 
-def test_When_ConsumingEligibleBookingCreatedEvent_Expect_ResultPublished() -> None:
+def test_When_ConsumingEligibleBookingCreatedEvent_Expect_ResultPublished(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
     _require_docker_daemon()
     customer_id = uuid4()
     booking_id = uuid4()
-    repository = _build_repository(
-        customers=[
-            Customer(
-                customer_id=customer_id,
-                name="Jane Doe",
-                email=Email("jane@example.com"),
-                phone="+57-3000000000",
-                password_hash="hashed::plain-password",
-                status=CustomerStatus.ACTIVE,
-                role=CustomerRole.CUSTOMER,
-                registered_at=datetime(2026, 4, 21, tzinfo=UTC),
-            )
-        ]
-    )
 
     # Act
     with RabbitMqContainer("rabbitmq:3.13-alpine") as rabbitmq:
-        connection_params = rabbitmq.get_connection_params()
-        rabbitmq_url = (
-            "amqp://"
-            f"{connection_params.credentials.username}:"
-            f"{connection_params.credentials.password}@"
-            f"{connection_params.host}:{connection_params.port}/%2F"
+        runtime = mysql_customer_runtime_factory()
+        repository = _build_repository(
+            runtime.database_url,
+            customers=[
+                Customer(
+                    customer_id=customer_id,
+                    name="Jane Doe",
+                    email=Email("jane@example.com"),
+                    phone="+57-3000000000",
+                    password_hash="hashed::plain-password",
+                    status=CustomerStatus.ACTIVE,
+                    role=CustomerRole.CUSTOMER,
+                    registered_at=datetime(2026, 4, 21, tzinfo=UTC),
+                )
+            ],
         )
+        connection_params = rabbitmq.get_connection_params()
+        rabbitmq_url = _build_rabbitmq_url(connection_params)
         settings = CustomerServiceSettings(
-            database_url="sqlite://",
+            database_url=runtime.database_url,
             event_publisher_backend="rabbitmq",
             rabbitmq_url=rabbitmq_url,
-            rabbitmq_exchange="customer.events",
             rabbitmq_input_queue="customer.validation.requests",
-            rabbitmq_consumer_exchange="booking.events",
+            rabbitmq_request_exchange="customer.exchange",
+            rabbitmq_request_routing_key="customer.request",
+            rabbitmq_response_exchange="customer.exchange",
+            rabbitmq_response_routing_key="customer.response.key",
         )
         observer_connection = pika.BlockingConnection(connection_params)
         observer_channel = observer_connection.channel()
-        observer_channel.exchange_declare(
-            exchange="customer.events",
-            exchange_type="topic",
-            durable=True,
-        )
-        response_queue = observer_channel.queue_declare(
-            queue="", exclusive=True
-        ).method.queue
-        observer_channel.queue_bind(
-            exchange="customer.events",
-            queue=response_queue,
-            routing_key="CustomerValidationResult",
-        )
+        response_queue = _declare_response_queue(observer_channel)
 
         worker = create_customer_validation_consumer(
             settings=settings,
@@ -92,17 +80,19 @@ def test_When_ConsumingEligibleBookingCreatedEvent_Expect_ResultPublished() -> N
             ),
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
-                exchange_name="customer.events",
+                exchange_name="customer.exchange",
+                exchange_type="direct",
+                routing_key="customer.response.key",
             ),
         )
         worker.ensure_topology()
         observer_channel.basic_publish(
-            exchange="booking.events",
-            routing_key="BookingCreated",
+            exchange="customer.exchange",
+            routing_key="customer.request",
             body=json.dumps(
                 {
                     "eventId": str(uuid4()),
-                    "eventType": "BookingCreated",
+                    "eventType": "BOOKING_Ok",
                     "bookingId": str(booking_id),
                     "customerId": str(customer_id),
                     "timestamp": "2026-04-22T00:00:00+00:00",
@@ -118,10 +108,10 @@ def test_When_ConsumingEligibleBookingCreatedEvent_Expect_ResultPublished() -> N
 
     # Assert
     assert processed is True
-    assert published_message["routing_key"] == "CustomerValidationResult"
+    assert published_message["routing_key"] == "customer.response.key"
     published_payload = json.loads(published_message["body"])
     assert UUID(published_payload["eventId"])
-    assert published_payload["eventType"] == "CustomerValidationResult"
+    assert published_payload["eventType"] == "BOOKING_Ok"
     assert published_payload["bookingId"] == str(booking_id)
     assert published_payload["customerId"] == str(customer_id)
     assert published_payload["isValid"] is True
@@ -130,45 +120,33 @@ def test_When_ConsumingEligibleBookingCreatedEvent_Expect_ResultPublished() -> N
     assert datetime.fromisoformat(published_payload["timestamp"]).tzinfo is not None
 
 
-def test_When_ValidatedCustomerIsMissing_Expect_InvalidResultPublished() -> None:
+def test_When_ValidatedCustomerIsMissing_Expect_InvalidResultPublished(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
     _require_docker_daemon()
     booking_id = uuid4()
     customer_id = uuid4()
-    repository = _build_repository()
 
     # Act
     with RabbitMqContainer("rabbitmq:3.13-alpine") as rabbitmq:
+        runtime = mysql_customer_runtime_factory()
+        repository = _build_repository(runtime.database_url)
         connection_params = rabbitmq.get_connection_params()
-        rabbitmq_url = (
-            "amqp://"
-            f"{connection_params.credentials.username}:"
-            f"{connection_params.credentials.password}@"
-            f"{connection_params.host}:{connection_params.port}/%2F"
-        )
+        rabbitmq_url = _build_rabbitmq_url(connection_params)
         settings = CustomerServiceSettings(
-            database_url="sqlite://",
+            database_url=runtime.database_url,
             event_publisher_backend="rabbitmq",
             rabbitmq_url=rabbitmq_url,
-            rabbitmq_exchange="customer.events",
             rabbitmq_input_queue="customer.validation.requests",
-            rabbitmq_consumer_exchange="booking.events",
+            rabbitmq_request_exchange="customer.exchange",
+            rabbitmq_request_routing_key="customer.request",
+            rabbitmq_response_exchange="customer.exchange",
+            rabbitmq_response_routing_key="customer.response.key",
         )
         observer_connection = pika.BlockingConnection(connection_params)
         observer_channel = observer_connection.channel()
-        observer_channel.exchange_declare(
-            exchange="customer.events",
-            exchange_type="topic",
-            durable=True,
-        )
-        response_queue = observer_channel.queue_declare(
-            queue="", exclusive=True
-        ).method.queue
-        observer_channel.queue_bind(
-            exchange="customer.events",
-            queue=response_queue,
-            routing_key="CustomerValidationResult",
-        )
+        response_queue = _declare_response_queue(observer_channel)
 
         worker = create_customer_validation_consumer(
             settings=settings,
@@ -177,13 +155,15 @@ def test_When_ValidatedCustomerIsMissing_Expect_InvalidResultPublished() -> None
             ),
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
-                exchange_name="customer.events",
+                exchange_name="customer.exchange",
+                exchange_type="direct",
+                routing_key="customer.response.key",
             ),
         )
         worker.ensure_topology()
         observer_channel.basic_publish(
-            exchange="booking.events",
-            routing_key="BookingCreated",
+            exchange="customer.exchange",
+            routing_key="customer.request",
             body=json.dumps(
                 {
                     "eventId": str(uuid4()),
@@ -212,58 +192,47 @@ def test_When_ValidatedCustomerIsMissing_Expect_InvalidResultPublished() -> None
     assert published_payload["customerId"] == str(customer_id)
 
 
-def test_When_ExistingCustomerIsInactive_Expect_InvalidResultPublished() -> None:
+def test_When_ExistingCustomerIsInactive_Expect_InvalidResultPublished(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
     _require_docker_daemon()
     booking_id = uuid4()
     customer_id = uuid4()
-    repository = _build_repository(
-        customers=[
-            Customer(
-                customer_id=customer_id,
-                name="Inactive Jane",
-                email=Email("inactive.jane@example.com"),
-                phone="+57-3000001111",
-                password_hash="hashed::plain-password",
-                status=CustomerStatus.INACTIVE,
-                role=CustomerRole.CUSTOMER,
-                registered_at=datetime(2026, 4, 21, tzinfo=UTC),
-            )
-        ]
-    )
 
     # Act
     with RabbitMqContainer("rabbitmq:3.13-alpine") as rabbitmq:
-        connection_params = rabbitmq.get_connection_params()
-        rabbitmq_url = (
-            "amqp://"
-            f"{connection_params.credentials.username}:"
-            f"{connection_params.credentials.password}@"
-            f"{connection_params.host}:{connection_params.port}/%2F"
+        runtime = mysql_customer_runtime_factory()
+        repository = _build_repository(
+            runtime.database_url,
+            customers=[
+                Customer(
+                    customer_id=customer_id,
+                    name="Inactive Jane",
+                    email=Email("inactive.jane@example.com"),
+                    phone="+57-3000001111",
+                    password_hash="hashed::plain-password",
+                    status=CustomerStatus.INACTIVE,
+                    role=CustomerRole.CUSTOMER,
+                    registered_at=datetime(2026, 4, 21, tzinfo=UTC),
+                )
+            ],
         )
+        connection_params = rabbitmq.get_connection_params()
+        rabbitmq_url = _build_rabbitmq_url(connection_params)
         settings = CustomerServiceSettings(
-            database_url="sqlite://",
+            database_url=runtime.database_url,
             event_publisher_backend="rabbitmq",
             rabbitmq_url=rabbitmq_url,
-            rabbitmq_exchange="customer.events",
             rabbitmq_input_queue="customer.validation.requests",
-            rabbitmq_consumer_exchange="booking.events",
+            rabbitmq_request_exchange="customer.exchange",
+            rabbitmq_request_routing_key="customer.request",
+            rabbitmq_response_exchange="customer.exchange",
+            rabbitmq_response_routing_key="customer.response.key",
         )
         observer_connection = pika.BlockingConnection(connection_params)
         observer_channel = observer_connection.channel()
-        observer_channel.exchange_declare(
-            exchange="customer.events",
-            exchange_type="topic",
-            durable=True,
-        )
-        response_queue = observer_channel.queue_declare(
-            queue="", exclusive=True
-        ).method.queue
-        observer_channel.queue_bind(
-            exchange="customer.events",
-            queue=response_queue,
-            routing_key="CustomerValidationResult",
-        )
+        response_queue = _declare_response_queue(observer_channel)
 
         worker = create_customer_validation_consumer(
             settings=settings,
@@ -272,13 +241,15 @@ def test_When_ExistingCustomerIsInactive_Expect_InvalidResultPublished() -> None
             ),
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
-                exchange_name="customer.events",
+                exchange_name="customer.exchange",
+                exchange_type="direct",
+                routing_key="customer.response.key",
             ),
         )
         worker.ensure_topology()
         observer_channel.basic_publish(
-            exchange="booking.events",
-            routing_key="BookingCreated",
+            exchange="customer.exchange",
+            routing_key="customer.request",
             body=json.dumps(
                 {
                     "eventId": str(uuid4()),
@@ -309,57 +280,47 @@ def test_When_ExistingCustomerIsInactive_Expect_InvalidResultPublished() -> None
     assert "eventName" not in published_payload
 
 
-def test_When_RequestPayloadIsMalformed_Expect_DiscardedWithoutPublishing() -> None:
+def test_When_RequestPayloadIsMalformed_Expect_DiscardedWithoutPublishing(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
     _require_docker_daemon()
 
     # Act
     with RabbitMqContainer("rabbitmq:3.13-alpine") as rabbitmq:
+        runtime = mysql_customer_runtime_factory()
         connection_params = rabbitmq.get_connection_params()
-        rabbitmq_url = (
-            "amqp://"
-            f"{connection_params.credentials.username}:"
-            f"{connection_params.credentials.password}@"
-            f"{connection_params.host}:{connection_params.port}/%2F"
-        )
+        rabbitmq_url = _build_rabbitmq_url(connection_params)
         settings = CustomerServiceSettings(
-            database_url="sqlite://",
+            database_url=runtime.database_url,
             event_publisher_backend="rabbitmq",
             rabbitmq_url=rabbitmq_url,
-            rabbitmq_exchange="customer.events",
             rabbitmq_input_queue="customer.validation.requests",
-            rabbitmq_consumer_exchange="booking.events",
+            rabbitmq_request_exchange="customer.exchange",
+            rabbitmq_request_routing_key="customer.request",
+            rabbitmq_response_exchange="customer.exchange",
+            rabbitmq_response_routing_key="customer.response.key",
         )
         observer_connection = pika.BlockingConnection(connection_params)
         observer_channel = observer_connection.channel()
-        observer_channel.exchange_declare(
-            exchange="customer.events",
-            exchange_type="topic",
-            durable=True,
-        )
-        response_queue = observer_channel.queue_declare(
-            queue="", exclusive=True
-        ).method.queue
-        observer_channel.queue_bind(
-            exchange="customer.events",
-            queue=response_queue,
-            routing_key="CustomerValidationResult",
-        )
+        response_queue = _declare_response_queue(observer_channel)
 
         worker = create_customer_validation_consumer(
             settings=settings,
             handler=CustomerValidationConsumer(
-                ValidateCustomerForReservation(_build_repository())
+                ValidateCustomerForReservation(_build_repository(runtime.database_url))
             ),
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
-                exchange_name="customer.events",
+                exchange_name="customer.exchange",
+                exchange_type="direct",
+                routing_key="customer.response.key",
             ),
         )
         worker.ensure_topology()
         observer_channel.basic_publish(
-            exchange="booking.events",
-            routing_key="BookingCreated",
+            exchange="customer.exchange",
+            routing_key="customer.request",
             body=json.dumps(
                 {
                     "eventType": "BookingCreated",
@@ -386,27 +347,27 @@ def test_When_RequestPayloadIsMalformed_Expect_DiscardedWithoutPublishing() -> N
     assert outbound_message[0] is None
 
 
-def test_When_UseCaseFailsUnexpectedly_Expect_MessageRequeued() -> None:
+def test_When_UseCaseFailsUnexpectedly_Expect_MessageRequeued(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
     _require_docker_daemon()
     customer_id = uuid4()
 
     # Act
     with RabbitMqContainer("rabbitmq:3.13-alpine") as rabbitmq:
+        runtime = mysql_customer_runtime_factory()
         connection_params = rabbitmq.get_connection_params()
-        rabbitmq_url = (
-            "amqp://"
-            f"{connection_params.credentials.username}:"
-            f"{connection_params.credentials.password}@"
-            f"{connection_params.host}:{connection_params.port}/%2F"
-        )
+        rabbitmq_url = _build_rabbitmq_url(connection_params)
         settings = CustomerServiceSettings(
-            database_url="sqlite://",
+            database_url=runtime.database_url,
             event_publisher_backend="rabbitmq",
             rabbitmq_url=rabbitmq_url,
-            rabbitmq_exchange="customer.events",
             rabbitmq_input_queue="customer.validation.requests",
-            rabbitmq_consumer_exchange="booking.events",
+            rabbitmq_request_exchange="customer.exchange",
+            rabbitmq_request_routing_key="customer.request",
+            rabbitmq_response_exchange="customer.exchange",
+            rabbitmq_response_routing_key="customer.response.key",
         )
         observer_connection = pika.BlockingConnection(connection_params)
         observer_channel = observer_connection.channel()
@@ -416,13 +377,15 @@ def test_When_UseCaseFailsUnexpectedly_Expect_MessageRequeued() -> None:
             handler=CustomerValidationConsumer(ExplodingValidationUseCase()),
             event_publisher=RabbitMQEventPublisher(
                 connection_factory=lambda: pika.BlockingConnection(connection_params),
-                exchange_name="customer.events",
+                exchange_name="customer.exchange",
+                exchange_type="direct",
+                routing_key="customer.response.key",
             ),
         )
         worker.ensure_topology()
         observer_channel.basic_publish(
-            exchange="booking.events",
-            routing_key="BookingCreated",
+            exchange="customer.exchange",
+            routing_key="customer.request",
             body=json.dumps(
                 {
                     "eventId": str(uuid4()),
@@ -454,16 +417,44 @@ class ExplodingValidationUseCase:
 
 
 def _build_repository(
-    *, customers: list[Customer] | None = None
+    database_url: str,
+    *,
+    customers: list[Customer] | None = None,
 ) -> SqlAlchemyCustomerRepository:
-    session_factory = create_session_factory("sqlite://")
-    Base.metadata.create_all(bind=session_factory.kw["bind"])
+    session_factory = create_session_factory(database_url)
     repository = SqlAlchemyCustomerRepository(session_factory)
 
     for customer in customers or []:
         repository.add(customer)
 
     return repository
+
+
+def _build_rabbitmq_url(connection_params: Any) -> str:
+    return (
+        "amqp://"
+        f"{connection_params.credentials.username}:"
+        f"{connection_params.credentials.password}@"
+        f"{connection_params.host}:{connection_params.port}/%2F"
+    )
+
+
+def _declare_response_queue(channel: Any) -> str:
+    channel.exchange_declare(
+        exchange="customer.exchange",
+        exchange_type="direct",
+        durable=True,
+    )
+    response_queue = channel.queue_declare(
+        queue="customer.response.queue",
+        durable=True,
+    ).method.queue
+    channel.queue_bind(
+        exchange="customer.exchange",
+        queue=response_queue,
+        routing_key="customer.response.key",
+    )
+    return response_queue
 
 
 def _require_docker_daemon() -> None:

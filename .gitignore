@@ -3,3 +3,6 @@ __pycache__/
 .ruff_cache/
 .venv/
 *.sqlite
+.coverage
+.env.deploy
+.env.local

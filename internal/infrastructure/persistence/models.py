@@ -3,6 +3,9 @@ from datetime import datetime
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+MYSQL_CHARSET = "utf8mb4"
+MYSQL_COLLATION = "utf8mb4_0900_ai_ci"
+
 
 class Base(DeclarativeBase):
     pass
@@ -10,6 +13,10 @@ class Base(DeclarativeBase):
 
 class CustomerModel(Base):
     __tablename__ = "customers"
+    __table_args__ = {
+        "mysql_charset": MYSQL_CHARSET,
+        "mysql_collate": MYSQL_COLLATION,
+    }
 
     customer_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)

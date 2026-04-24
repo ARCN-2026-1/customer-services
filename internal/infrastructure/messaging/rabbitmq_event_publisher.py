@@ -41,14 +41,14 @@ def _event_to_payload(event: object) -> dict[str, Any]:
     }
 
 
-def _resolve_routing_key(payload: dict[str, Any]) -> str:
-    event_type = payload.get("eventType")
-    if isinstance(event_type, str) and event_type:
-        return event_type
-
+def _resolve_event_name(payload: dict[str, Any]) -> str:
     event_name = payload.get("eventName")
     if isinstance(event_name, str) and event_name:
         return event_name
+
+    event_type = payload.get("eventType")
+    if isinstance(event_type, str) and event_type:
+        return event_type
 
     raise KeyError("eventType")
 
@@ -59,28 +59,33 @@ class RabbitMQEventPublisher:
         *,
         connection_factory: Callable[[], Any],
         exchange_name: str,
+        exchange_type: str = "topic",
+        routing_key: str | None = None,
         properties_factory: Any | None = None,
     ) -> None:
         self._connection_factory = connection_factory
         self._exchange_name = exchange_name
+        self._exchange_type = exchange_type
+        self._routing_key = routing_key
         self._properties_factory = properties_factory or _build_message_properties
 
     def publish(self, event: object) -> None:
         payload = _event_to_payload(event)
-        routing_key = _resolve_routing_key(payload)
+        event_name = _resolve_event_name(payload)
+        routing_key = self._routing_key or event_name
         connection = self._connection_factory()
         try:
             channel = connection.channel()
             channel.exchange_declare(
                 exchange=self._exchange_name,
-                exchange_type="topic",
+                exchange_type=self._exchange_type,
                 durable=True,
             )
             channel.basic_publish(
                 exchange=self._exchange_name,
                 routing_key=routing_key,
                 body=json.dumps(payload),
-                properties=self._properties_factory(event_name=routing_key),
+                properties=self._properties_factory(event_name=event_name),
             )
         except Exception as error:
             logger.exception(
@@ -88,7 +93,7 @@ class RabbitMQEventPublisher:
                     "Failed to publish customer event to RabbitMQ "
                     "event_name=%s exchange=%s"
                 ),
-                routing_key,
+                event_name,
                 self._exchange_name,
             )
             raise EventPublicationError("Customer event publication failed") from error

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
+
+import pytest
+from sqlalchemy.exc import OperationalError
 
 import consumer as consumer_module
 from consumer import build_worker_runtime
@@ -26,6 +31,175 @@ from internal.interfaces.messaging.customer_validation_consumer import (
     CustomerValidationConsumer,
     CustomerValidationHandlingResult,
 )
+from internal.interfaces.rest import app as rest_app_module
+
+MYSQL_TEST_URL = (
+    "mysql+pymysql://customer:secret@localhost:3306/customer_service?charset=utf8mb4"
+)
+
+
+def test_When_ComposingDatabaseUrlFromMySqlParts_Expect_ResolvedUrlUsesUtf8mb4() -> (
+    None
+):
+    # Arrange
+    settings = CustomerServiceSettings(
+        database_url=None,
+        db_host="mysql",
+        db_port=3307,
+        db_user="customer_app",
+        db_password="super-secret",
+        db_name="customer_service",
+    )
+
+    # Act
+    resolved_url = settings.resolved_database_url
+
+    # Assert
+    assert resolved_url == (
+        "mysql+pymysql://customer_app:super-secret@mysql:3307/"
+        "customer_service?charset=utf8mb4"
+    )
+
+
+def test_When_DatabaseUrlOverrideIsPresent_Expect_ResolvedDatabaseUrlUsesOverride() -> (
+    None
+):
+    # Arrange
+    settings = CustomerServiceSettings(
+        database_url=MYSQL_TEST_URL,
+        db_host="ignored-host",
+        db_port=3307,
+        db_user="ignored-user",
+        db_password="ignored-password",
+        db_name="ignored-db",
+    )
+
+    # Act
+    resolved_url = settings.resolved_database_url
+
+    # Assert
+    assert resolved_url == MYSQL_TEST_URL
+
+
+def test_When_MySqlSettingsAreIncomplete_Expect_ResolvedDatabaseUrlFailsFast() -> None:
+    # Arrange
+    settings = CustomerServiceSettings(
+        database_url=None,
+        db_host="mysql",
+        db_user="customer_app",
+        db_password="super-secret",
+        db_name=None,
+    )
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="Missing MySQL configuration values"):
+        _ = settings.resolved_database_url
+
+
+def test_When_UsingDeploymentMySqlEnvNames_Expect_SettingsResolveDatabaseUrl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    monkeypatch.delenv("CUSTOMER_SERVICE_DATABASE_URL", raising=False)
+    monkeypatch.setenv("MYSQL_DATABASE", "customer_service")
+    monkeypatch.setenv("MYSQL_USER", "customer_app")
+    monkeypatch.setenv("MYSQL_PASSWORD", "super-secret")
+    monkeypatch.setenv("MYSQL_LOCAL_PORT", "3308")
+
+    # Act
+    settings = CustomerServiceSettings()
+
+    # Assert
+    assert settings.resolved_database_url == (
+        "mysql+pymysql://customer_app:super-secret@localhost:3308/"
+        "customer_service?charset=utf8mb4"
+    )
+
+
+def test_When_UsingDeploymentRabbitMqEnvNames_Expect_SettingsResolveRabbitMqUrl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    monkeypatch.delenv("CUSTOMER_SERVICE_RABBITMQ_URL", raising=False)
+    monkeypatch.setenv("RABBITMQ_HOST", "rabbitmq")
+    monkeypatch.setenv("RABBITMQ_DEFAULT_USER", "svc-user")
+    monkeypatch.setenv("RABBITMQ_DEFAULT_PASS", "svc-pass")
+    monkeypatch.setenv("RABBITMQ_PORT", "5673")
+
+    # Act
+    settings = CustomerServiceSettings()
+
+    # Assert
+    assert settings.resolved_rabbitmq_url == "amqp://svc-user:svc-pass@rabbitmq:5673/%2F"
+
+
+def test_When_CustomerServiceRabbitMqUrlIsSet_Expect_ItOverridesDerivedRabbitMqUrl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    monkeypatch.setenv("RABBITMQ_DEFAULT_USER", "svc-user")
+    monkeypatch.setenv("RABBITMQ_DEFAULT_PASS", "svc-pass")
+    monkeypatch.setenv("RABBITMQ_PORT", "5673")
+    monkeypatch.setenv(
+        "CUSTOMER_SERVICE_RABBITMQ_URL", "amqp://guest:guest@localhost:5672/%2F"
+    )
+
+    # Act
+    settings = CustomerServiceSettings()
+
+    # Assert
+    assert settings.resolved_rabbitmq_url == "amqp://guest:guest@localhost:5672/%2F"
+
+
+def test_When_CreatingAppWithReachableMySql_Expect_StartsAfterConnectionCheck(
+    monkeypatch,
+) -> None:
+    # Arrange
+    bind = RecordingEngine()
+    session_factory = SimpleNamespace(kw={"bind": bind})
+    settings = CustomerServiceSettings(
+        database_url=MYSQL_TEST_URL,
+        event_publisher_backend="in-memory",
+    )
+
+    monkeypatch.setattr(
+        rest_app_module,
+        "create_session_factory",
+        lambda database_url: session_factory,
+    )
+
+    # Act
+    app = rest_app_module.create_app(settings)
+
+    # Assert
+    assert app.state.session_factory is session_factory
+    assert bind.connect_calls == 1
+    assert not hasattr(rest_app_module, "Base")
+
+
+def test_When_CreatingAppWithUnreachableMySql_Expect_StartupFailsWithoutRuntimeDdl(
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    session_factory = SimpleNamespace(kw={"bind": FailingEngine()})
+    settings = CustomerServiceSettings(
+        database_url=MYSQL_TEST_URL,
+        event_publisher_backend="in-memory",
+    )
+
+    monkeypatch.setattr(
+        rest_app_module,
+        "create_session_factory",
+        lambda database_url: session_factory,
+    )
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="Customer service database is unreachable"):
+        rest_app_module.create_app(settings)
+
+    assert not hasattr(rest_app_module, "Base")
+    assert "Customer service database connectivity check failed" in caplog.text
 
 
 def test_When_StartingWorkerProcess_Expect_TopologyPreparedBeforeConsumption(
@@ -46,6 +220,22 @@ def test_When_StartingWorkerProcess_Expect_TopologyPreparedBeforeConsumption(
     assert runtime_consumer.calls == ["ensure_topology", "start_consuming"]
 
 
+def test_When_ConfiguringWorkerLoggingWithHandlers_Expect_RootLevelSetToInfo() -> None:
+    # Arrange
+    root_logger = logging.getLogger()
+    original_level = root_logger.level
+    root_logger.setLevel(logging.WARNING)
+
+    # Act
+    consumer_module._configure_logging()
+
+    # Assert
+    assert root_logger.level == logging.INFO
+
+    # Cleanup
+    root_logger.setLevel(original_level)
+
+
 def test_When_CreatingRabbitMqPublisherAndConsumer_Expect_SharedRabbitMqConfiguration(
     monkeypatch,
 ) -> None:
@@ -53,12 +243,14 @@ def test_When_CreatingRabbitMqPublisherAndConsumer_Expect_SharedRabbitMqConfigur
     connection_calls: list[tuple[str, int, int]] = []
     opened_channels: list[RecordingChannel] = []
     settings = CustomerServiceSettings(
-        database_url="sqlite://",
+        database_url=MYSQL_TEST_URL,
         event_publisher_backend="rabbitmq",
         rabbitmq_url="amqp://guest:guest@localhost:5672/%2F",
         rabbitmq_input_queue="customer.validation.requests",
-        rabbitmq_consumer_exchange="booking.events",
-        rabbitmq_exchange="customer.events",
+        rabbitmq_request_exchange="customer.exchange",
+        rabbitmq_request_routing_key="customer.request",
+        rabbitmq_response_exchange="customer.exchange",
+        rabbitmq_response_routing_key="customer.response.key",
     )
     handler = CustomerValidationConsumer(StubValidationUseCase())
 
@@ -89,6 +281,7 @@ def test_When_CreatingRabbitMqPublisherAndConsumer_Expect_SharedRabbitMqConfigur
     publisher.publish(
         CustomerValidationResult(
             event_id=uuid4(),
+            event_type="BOOKING_Ok",
             booking_id=uuid4(),
             customer_id=uuid4(),
             is_valid=True,
@@ -102,34 +295,66 @@ def test_When_CreatingRabbitMqPublisherAndConsumer_Expect_SharedRabbitMqConfigur
         ("amqp://guest:guest@localhost:5672/%2F", 60, 30),
         ("amqp://guest:guest@localhost:5672/%2F", 60, 30),
     ]
-    assert opened_channels[0].published_messages[0]["exchange"] == "customer.events"
+    assert opened_channels[0].published_messages[0]["exchange"] == "customer.exchange"
     assert (
         opened_channels[0].published_messages[0]["routing_key"]
-        == "CustomerValidationResult"
+        == "customer.response.key"
     )
     assert opened_channels[1].bindings == [
         {
-            "exchange": "booking.events",
+            "exchange": "customer.exchange",
             "queue": "customer.validation.requests",
-            "routing_key": "BookingCreated",
+            "routing_key": "customer.request",
+        }
+    ]
+    assert opened_channels[0].exchange_declarations == [
+        {
+            "exchange": "customer.exchange",
+            "exchange_type": "direct",
+            "durable": True,
+        }
+    ]
+    assert opened_channels[1].exchange_declarations == [
+        {
+            "exchange": "customer.exchange",
+            "exchange_type": "direct",
+            "durable": True,
         }
     ]
     assert consumer.input_queue == "customer.validation.requests"
-    assert consumer.consumer_exchange == "booking.events"
+    assert consumer.request_exchange == "customer.exchange"
+    assert consumer.request_routing_key == "customer.request"
 
 
-def test_When_BuildingDedicatedWorkerRuntime_Expect_SeparatedBootstrap() -> None:
+def test_When_BuildingDedicatedWorkerRuntime_Expect_SeparatedBootstrap(
+    monkeypatch,
+) -> None:
     # Arrange
     root_dir = Path(__file__).resolve().parents[3]
     (root_dir / "data").mkdir(exist_ok=True)
     settings = CustomerServiceSettings(
-        database_url="sqlite://",
+        database_url=MYSQL_TEST_URL,
         event_publisher_backend="in-memory",
         rabbitmq_input_queue="customer.validation.requests",
-        rabbitmq_consumer_exchange="booking.events",
+        rabbitmq_request_exchange="customer.exchange",
+        rabbitmq_request_routing_key="customer.request",
     )
 
     # Act
+    rest_bind = RecordingEngine()
+    rest_session_factory = SimpleNamespace(kw={"bind": rest_bind})
+    monkeypatch.setattr(
+        rest_app_module,
+        "create_session_factory",
+        lambda database_url: rest_session_factory,
+    )
+    monkeypatch.setattr(
+        consumer_module,
+        "create_session_factory",
+        lambda database_url: rest_session_factory,
+    )
+    monkeypatch.setenv("CUSTOMER_SERVICE_DATABASE_URL", MYSQL_TEST_URL)
+    sys.modules.pop("main", None)
     import main
 
     runtime = build_worker_runtime(settings)
@@ -137,7 +362,8 @@ def test_When_BuildingDedicatedWorkerRuntime_Expect_SeparatedBootstrap() -> None
     # Assert
     assert runtime.settings.rabbitmq_input_queue == "customer.validation.requests"
     assert runtime.consumer.input_queue == "customer.validation.requests"
-    assert runtime.consumer.consumer_exchange == "booking.events"
+    assert runtime.consumer.request_exchange == "customer.exchange"
+    assert runtime.consumer.request_routing_key == "customer.request"
     assert runtime.handler is not None
     assert hasattr(main, "app")
     assert not hasattr(main.app.state, "customer_validation_consumer")
@@ -177,10 +403,42 @@ def test_When_RequestPayloadIsNotAnObject_Expect_MessageDiscarded() -> None:
     assert channel.nacked_messages == [{"delivery_tag": 7, "requeue": False}]
 
 
+def test_When_RequestPayloadIsInvalidJson_Expect_DiscardedAndDecisionLogged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    channel = RecordingChannel(
+        message=(
+            DeliveryFrame(delivery_tag=8),
+            None,
+            b"{not-json}",
+        )
+    )
+    consumer = _build_rabbitmq_consumer(channel=channel)
+    caplog.set_level(logging.INFO)
+
+    # Act
+    processed = consumer.process_next_message()
+
+    # Assert
+    assert processed is True
+    assert channel.acked_delivery_tags == []
+    assert channel.nacked_messages == [{"delivery_tag": 8, "requeue": False}]
+    assert (
+        "Discarding customer validation message due to invalid JSON delivery_tag=8"
+        in caplog.text
+    )
+    assert (
+        "Customer validation ack decision=nack requeue=false delivery_tag=8"
+        in caplog.text
+    )
+
+
 def test_When_PublishingResultFails_Expect_MessageRequeued() -> None:
     # Arrange
     event = CustomerValidationResult(
         event_id=uuid4(),
+        event_type="BookingCreated",
         booking_id=uuid4(),
         customer_id=uuid4(),
         is_valid=True,
@@ -234,35 +492,80 @@ def test_When_PublishingResultFails_Expect_MessageRequeued() -> None:
     assert channel.nacked_messages == [{"delivery_tag": 9, "requeue": True}]
 
 
-def test_When_StartingAdapterConsumption_Expect_PollingUntilQueueDrained() -> None:
+def test_When_QueueIsTemporarilyEmpty_Expect_ConsumerKeepsPollingWithIdleSleep() -> (
+    None
+):
     # Arrange
     consumer = _build_rabbitmq_consumer(channel=RecordingChannel())
     calls: list[str] = []
-    results = iter([True, True, False])
+    slept: list[float] = []
+    results = iter([False, False, True])
 
-    def fake_process_next_message() -> bool:
+    def fake_consume_once(channel: Any) -> bool:
         calls.append("processed")
-        return next(results)
+        if len(calls) >= 4:
+            raise KeyboardInterrupt
+        return next(results, False)
 
-    consumer.process_next_message = fake_process_next_message  # type: ignore[method-assign]
+    def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
 
-    # Act
-    consumer.start_consuming()
+    consumer._consume_once = fake_consume_once  # type: ignore[method-assign]
 
-    # Assert
-    assert calls == ["processed", "processed", "processed"]
+    # Act / Assert
+    with pytest.raises(KeyboardInterrupt):
+        consumer.start_consuming(idle_sleep_seconds=0.2, sleep_fn=fake_sleep)
+
+    assert calls == ["processed", "processed", "processed", "processed"]
+    assert slept == [0.2, 0.2]
 
 
-def test_When_PublishingValidationResult_Expect_EventTypeRoutingKey() -> None:
+def test_When_StartingConsumeLoop_Expect_RabbitMqConnectionStaysOpenBetweenIdlePolls() -> (
+    None
+):
+    # Arrange
+    channel = RecordingChannel()
+    opened_connections: list[RecordingConnection] = []
+
+    def connection_factory() -> RecordingConnection:
+        connection = RecordingConnection(channel)
+        opened_connections.append(connection)
+        return connection
+
+    consumer = _build_rabbitmq_consumer(
+        channel=channel,
+        connection_factory=connection_factory,
+    )
+    slept: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+        if len(slept) >= 2:
+            raise KeyboardInterrupt
+
+    # Act / Assert
+    with pytest.raises(KeyboardInterrupt):
+        consumer.start_consuming(idle_sleep_seconds=0.2, sleep_fn=fake_sleep)
+
+    assert len(opened_connections) == 1
+    assert opened_connections[0].closed is True
+    assert slept == [0.2, 0.2]
+
+
+def test_When_PublishingValidationResult_Expect_ConfiguredResponseRoutingKeyAndPayloadEventType() -> (
+    None
+):
     # Arrange
     channel = RecordingChannel()
     publisher = messaging_factory.RabbitMQEventPublisher(
         connection_factory=lambda: RecordingConnection(channel),
-        exchange_name="customer.events",
+        exchange_name="customer.exchange",
+        routing_key="customer.response.key",
         properties_factory=lambda event_name: {"type": event_name},
     )
     event = CustomerValidationResult(
         event_id=uuid4(),
+        event_type="BOOKING_Ok",
         booking_id=uuid4(),
         customer_id=uuid4(),
         is_valid=False,
@@ -273,10 +576,11 @@ def test_When_PublishingValidationResult_Expect_EventTypeRoutingKey() -> None:
     publisher.publish(event)
 
     # Assert
-    assert channel.published_messages[0]["routing_key"] == "CustomerValidationResult"
+    assert channel.published_messages[0]["exchange"] == "customer.exchange"
+    assert channel.published_messages[0]["routing_key"] == "customer.response.key"
     assert json.loads(channel.published_messages[0]["body"]) == {
         "eventId": str(event.event_id),
-        "eventType": "CustomerValidationResult",
+        "eventType": "BOOKING_Ok",
         "bookingId": str(event.booking_id),
         "customerId": str(event.customer_id),
         "isValid": False,
@@ -340,11 +644,18 @@ class RecordingChannel:
         self.nacked_messages: list[dict[str, Any]] = []
         self.published_messages: list[dict[str, Any]] = []
         self.bindings: list[dict[str, Any]] = []
+        self.exchange_declarations: list[dict[str, Any]] = []
 
     def exchange_declare(
         self, *, exchange: str, exchange_type: str, durable: bool
     ) -> None:
-        return None
+        self.exchange_declarations.append(
+            {
+                "exchange": exchange,
+                "exchange_type": exchange_type,
+                "durable": durable,
+            }
+        )
 
     def queue_declare(self, *, queue: str, durable: bool) -> None:
         return None
@@ -397,6 +708,28 @@ class RecordingConnection:
         self.closed = True
 
 
+class RecordingEngine:
+    def __init__(self) -> None:
+        self.connect_calls = 0
+
+    def connect(self) -> "RecordingEngineConnection":
+        self.connect_calls += 1
+        return RecordingEngineConnection()
+
+
+class RecordingEngineConnection:
+    def __enter__(self) -> "RecordingEngineConnection":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+class FailingEngine:
+    def connect(self) -> "RecordingEngineConnection":
+        raise OperationalError("SELECT 1", {}, RuntimeError("unreachable"))
+
+
 @dataclass
 class StubHandler:
     result: CustomerValidationHandlingResult
@@ -429,6 +762,7 @@ def _build_rabbitmq_consumer(
     channel: RecordingChannel,
     handler: Any | None = None,
     publisher: Any | None = None,
+    connection_factory: Any | None = None,
 ) -> RabbitMQCustomerValidationConsumer:
     resolved_handler = handler or StubHandler(
         result=CustomerValidationHandlingResult(
@@ -440,9 +774,13 @@ def _build_rabbitmq_consumer(
     resolved_publisher = publisher or create_event_publisher(
         CustomerServiceSettings(event_publisher_backend="in-memory")
     )
+    resolved_connection_factory = connection_factory or (
+        lambda: RecordingConnection(channel)
+    )
     return RabbitMQCustomerValidationConsumer(
-        connection_factory=lambda: RecordingConnection(channel),
-        consumer_exchange="booking.events",
+        connection_factory=resolved_connection_factory,
+        request_exchange="customer.exchange",
+        request_routing_key="customer.request",
         input_queue="customer.validation.requests",
         handler=resolved_handler,
         event_publisher=resolved_publisher,
