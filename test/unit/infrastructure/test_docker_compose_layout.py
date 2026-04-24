@@ -80,7 +80,8 @@ def test_When_ReadingLocalDockerDocs_Expect_CombinedComposeCommandDocumented() -
 
     # Act
     expected_command = (
-        "docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml up -d"
+        "docker compose --env-file .env.local "
+        "-f docker-compose.yml -f docker-compose.dev.yml up -d"
     )
 
     # Assert
@@ -111,7 +112,19 @@ def test_When_ReadingEnvExample_Expect_CustomerRabbitContractDocumented() -> Non
     env_example_content = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
 
     # Assert
-    assert "CUSTOMER_SERVICE_RABBITMQ_REQUEST_EXCHANGE=customer.exchange" in env_example_content
-    assert "CUSTOMER_SERVICE_RABBITMQ_REQUEST_ROUTING_KEY=customer.request" in env_example_content
-    assert "CUSTOMER_SERVICE_RABBITMQ_RESPONSE_EXCHANGE=customer.exchange" in env_example_content
-    assert "CUSTOMER_SERVICE_RABBITMQ_RESPONSE_ROUTING_KEY=customer.response.key" in env_example_content
+    assert (
+        "CUSTOMER_SERVICE_RABBITMQ_REQUEST_EXCHANGE=customer.exchange"
+        in env_example_content
+    )
+    assert (
+        "CUSTOMER_SERVICE_RABBITMQ_REQUEST_ROUTING_KEY=customer.request"
+        in env_example_content
+    )
+    assert (
+        "CUSTOMER_SERVICE_RABBITMQ_RESPONSE_EXCHANGE=customer.exchange"
+        in env_example_content
+    )
+    assert (
+        "CUSTOMER_SERVICE_RABBITMQ_RESPONSE_ROUTING_KEY=customer.response.key"
+        in env_example_content
+    )
