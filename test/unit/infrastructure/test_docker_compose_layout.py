@@ -21,13 +21,12 @@ def test_When_ReadingBaseCompose_Expect_DeployReadyRuntimeDefinition() -> None:
     assert "CUSTOMER_SERVICE_DATABASE_URL:" in compose_content
     assert "CUSTOMER_SERVICE_RABBITMQ_URL:" in compose_content
     assert (
-        "image: ${CUSTOMER_SERVICE_IMAGE:-customer-service:latest}"
-        in compose_content
+        "image: ${CUSTOMER_SERVICE_IMAGE:-customer-service:latest}" in compose_content
     )
     assert "build:" in compose_content
     assert "condition: service_completed_successfully" in compose_content
-    assert "command: [\".venv/bin/alembic\", \"upgrade\", \"head\"]" in compose_content
-    assert "command: [\".venv/bin/python\", \"consumer.py\"]" in compose_content
+    assert 'command: [".venv/bin/alembic", "upgrade", "head"]' in compose_content
+    assert 'command: [".venv/bin/python", "consumer.py"]' in compose_content
     assert "healthcheck:" in compose_content
     assert "restart: unless-stopped" in compose_content
     assert "${CUSTOMER_SERVICE_PORT:-8000}:8000" in compose_content
@@ -55,12 +54,8 @@ def test_When_ReadingDevCompose_Expect_LocalInfrastructureAndOverridesPresent() 
     assert "MYSQL_PASSWORD: ${MYSQL_PASSWORD:-customer_app_local}" in compose_content
     assert "MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_local}" in compose_content
     assert "MYSQL_LOCAL_PORT: ${MYSQL_LOCAL_PORT:-3306}" in compose_content
-    assert (
-        "RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-guest}" in compose_content
-    )
-    assert (
-        "RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-guest}" in compose_content
-    )
+    assert "RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-guest}" in compose_content
+    assert "RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-guest}" in compose_content
     assert "RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}" in compose_content
     assert "${RABBITMQ_UI_PORT:-15672}:15672" in compose_content
     assert "${CUSTOMER_SERVICE_JWT_SECRET:-local-dev-secret}" in compose_content
@@ -91,8 +86,9 @@ def test_When_ReadingLocalDockerDocs_Expect_CombinedComposeCommandDocumented() -
     assert "docker-compose.dev.yml" in service_doc_content
 
 
-def test_When_ReadingDeployDockerDocs_Expect_BaseComposeDeployCommandDocumented(
-) -> None:
+def test_When_ReadingDeployDockerDocs_Expect_BaseComposeDeployCommandDocumented() -> (
+    None
+):
     # Arrange
     readme_content = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     service_doc_content = (

@@ -47,8 +47,9 @@ def test_When_AlembicGetsExplicitSqlalchemyUrl_Expect_ItIsPreserved() -> None:
     assert resolved_url == explicit_url
 
 
-def test_When_SetMainOptionReceivesPercentEncodedUrl_Expect_ConfigInterpolationFails(
-) -> None:
+def test_When_SetMainOptionReceivesPercentEncodedUrl_Expect_ConfigInterpolationFails() -> (  # noqa: E501
+    None
+):
     # Arrange
     config = Config()
     runtime_url = (
@@ -61,8 +62,9 @@ def test_When_SetMainOptionReceivesPercentEncodedUrl_Expect_ConfigInterpolationF
         config.set_main_option("sqlalchemy.url", runtime_url)
 
 
-def test_When_UsingEscapedUrlInAlembicConfig_Expect_PercentEncodedUrlRoundTrips(
-) -> None:
+def test_When_UsingEscapedUrlInAlembicConfig_Expect_PercentEncodedUrlRoundTrips() -> (
+    None
+):
     # Arrange
     config = Config()
     runtime_url = (
