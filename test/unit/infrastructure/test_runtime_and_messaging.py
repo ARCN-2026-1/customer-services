@@ -101,6 +101,7 @@ def test_When_UsingDeploymentMySqlEnvNames_Expect_SettingsResolveDatabaseUrl(
 ) -> None:
     # Arrange
     monkeypatch.delenv("CUSTOMER_SERVICE_DATABASE_URL", raising=False)
+    monkeypatch.setenv("MYSQL_HOST", "localhost")
     monkeypatch.setenv("MYSQL_DATABASE", "customer_service")
     monkeypatch.setenv("MYSQL_USER", "customer_app")
     monkeypatch.setenv("MYSQL_PASSWORD", "super-secret")
@@ -130,7 +131,9 @@ def test_When_UsingDeploymentRabbitMqEnvNames_Expect_SettingsResolveRabbitMqUrl(
     settings = CustomerServiceSettings()
 
     # Assert
-    assert settings.resolved_rabbitmq_url == "amqp://svc-user:svc-pass@rabbitmq:5673/%2F"
+    assert (
+        settings.resolved_rabbitmq_url == "amqp://svc-user:svc-pass@rabbitmq:5673/%2F"
+    )
 
 
 def test_When_CustomerServiceRabbitMqUrlIsSet_Expect_ItOverridesDerivedRabbitMqUrl(
@@ -520,8 +523,7 @@ def test_When_QueueIsTemporarilyEmpty_Expect_ConsumerKeepsPollingWithIdleSleep()
     assert slept == [0.2, 0.2]
 
 
-def test_When_StartingConsumeLoop_Expect_RabbitMqConnectionStaysOpenBetweenIdlePolls(
-) -> None:
+def test_When_StartingConsumeLoop_Expect_RabbitMqConnectionStaysOpen() -> None:
     # Arrange
     channel = RecordingChannel()
     opened_connections: list[RecordingConnection] = []

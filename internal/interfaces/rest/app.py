@@ -3,6 +3,7 @@ from functools import partial
 from typing import Any
 
 from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -66,6 +67,10 @@ API_DESCRIPTION = (
     "customer management, and reservation eligibility queries."
 )
 API_VERSION = "0.1.0"
+ALLOWED_CORS_ORIGINS = [
+    "http://20.116.218.234:80",
+    "http://localhost:5173",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +232,13 @@ def create_app(settings: CustomerServiceSettings | None = None) -> FastAPI:
         description=API_DESCRIPTION,
         version=API_VERSION,
         openapi_tags=OPENAPI_TAGS,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     _register_exception_handlers(app)
     app.state.session_factory = session_factory
