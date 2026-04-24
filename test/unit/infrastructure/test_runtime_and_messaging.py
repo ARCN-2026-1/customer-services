@@ -130,7 +130,9 @@ def test_When_UsingDeploymentRabbitMqEnvNames_Expect_SettingsResolveRabbitMqUrl(
     settings = CustomerServiceSettings()
 
     # Assert
-    assert settings.resolved_rabbitmq_url == "amqp://svc-user:svc-pass@rabbitmq:5673/%2F"
+    assert (
+        settings.resolved_rabbitmq_url == "amqp://svc-user:svc-pass@rabbitmq:5673/%2F"
+    )
 
 
 def test_When_CustomerServiceRabbitMqUrlIsSet_Expect_ItOverridesDerivedRabbitMqUrl(
@@ -520,8 +522,9 @@ def test_When_QueueIsTemporarilyEmpty_Expect_ConsumerKeepsPollingWithIdleSleep()
     assert slept == [0.2, 0.2]
 
 
-def test_When_StartingConsumeLoop_Expect_RabbitMqConnectionStaysOpenBetweenIdlePolls(
-) -> None:
+def test_When_StartingConsumeLoop_Expect_RabbitMqConnectionStaysOpenBetweenIdlePolls() -> (  # noqa: E501
+    None
+):
     # Arrange
     channel = RecordingChannel()
     opened_connections: list[RecordingConnection] = []
