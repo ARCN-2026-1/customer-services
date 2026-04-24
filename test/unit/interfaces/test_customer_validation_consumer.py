@@ -173,10 +173,12 @@ def test_When_InvalidBookingId_Expect_DiscardedMessageAndLoggedError(
     assert result.should_ack is False
     assert result.requeue is False
     assert result.event is None
-    assert caplog.messages == [
+    assert len(caplog.messages) == 1
+    assert (
         "Discarding BookingCreated message due to contract validation failure: "
-        "bookingId must be a valid UUID"
-    ]
+        "bookingId must be a valid UUID payload="
+    ) in caplog.messages[0]
+    assert "bookingId': 'not-a-uuid'" in caplog.messages[0]
 
 
 def test_When_RequestPayloadUsesInvalidTimestamp_Expect_DiscardedMessage() -> None:
@@ -267,10 +269,12 @@ def test_When_UnexpectedEventType_Expect_DiscardedMessageAndLoggedError(
     assert result.should_ack is False
     assert result.requeue is False
     assert result.event is None
-    assert caplog.messages == [
+    assert len(caplog.messages) == 1
+    assert (
         "Discarding BookingCreated message due to contract validation failure: "
-        "Unsupported event type: CustomerValidationRequested"
-    ]
+        "Unsupported event type: CustomerValidationRequested payload="
+    ) in caplog.messages[0]
+    assert "eventType': 'CustomerValidationRequested'" in caplog.messages[0]
 
 
 def test_When_CustomerDoesNotExist_Expect_AckedInvalidResult() -> None:

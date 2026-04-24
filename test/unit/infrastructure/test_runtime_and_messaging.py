@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -219,6 +220,22 @@ def test_When_StartingWorkerProcess_Expect_TopologyPreparedBeforeConsumption(
     assert runtime_consumer.calls == ["ensure_topology", "start_consuming"]
 
 
+def test_When_ConfiguringWorkerLoggingWithHandlers_Expect_RootLevelSetToInfo() -> None:
+    # Arrange
+    root_logger = logging.getLogger()
+    original_level = root_logger.level
+    root_logger.setLevel(logging.WARNING)
+
+    # Act
+    consumer_module._configure_logging()
+
+    # Assert
+    assert root_logger.level == logging.INFO
+
+    # Cleanup
+    root_logger.setLevel(original_level)
+
+
 def test_When_CreatingRabbitMqPublisherAndConsumer_Expect_SharedRabbitMqConfiguration(
     monkeypatch,
 ) -> None:
@@ -386,6 +403,37 @@ def test_When_RequestPayloadIsNotAnObject_Expect_MessageDiscarded() -> None:
     assert channel.nacked_messages == [{"delivery_tag": 7, "requeue": False}]
 
 
+def test_When_RequestPayloadIsInvalidJson_Expect_DiscardedAndDecisionLogged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    channel = RecordingChannel(
+        message=(
+            DeliveryFrame(delivery_tag=8),
+            None,
+            b"{not-json}",
+        )
+    )
+    consumer = _build_rabbitmq_consumer(channel=channel)
+    caplog.set_level(logging.INFO)
+
+    # Act
+    processed = consumer.process_next_message()
+
+    # Assert
+    assert processed is True
+    assert channel.acked_delivery_tags == []
+    assert channel.nacked_messages == [{"delivery_tag": 8, "requeue": False}]
+    assert (
+        "Discarding customer validation message due to invalid JSON delivery_tag=8"
+        in caplog.text
+    )
+    assert (
+        "Customer validation ack decision=nack requeue=false delivery_tag=8"
+        in caplog.text
+    )
+
+
 def test_When_PublishingResultFails_Expect_MessageRequeued() -> None:
     # Arrange
     event = CustomerValidationResult(
@@ -444,23 +492,64 @@ def test_When_PublishingResultFails_Expect_MessageRequeued() -> None:
     assert channel.nacked_messages == [{"delivery_tag": 9, "requeue": True}]
 
 
-def test_When_StartingAdapterConsumption_Expect_PollingUntilQueueDrained() -> None:
+def test_When_QueueIsTemporarilyEmpty_Expect_ConsumerKeepsPollingWithIdleSleep() -> (
+    None
+):
     # Arrange
     consumer = _build_rabbitmq_consumer(channel=RecordingChannel())
     calls: list[str] = []
-    results = iter([True, True, False])
+    slept: list[float] = []
+    results = iter([False, False, True])
 
-    def fake_process_next_message() -> bool:
+    def fake_consume_once(channel: Any) -> bool:
         calls.append("processed")
-        return next(results)
+        if len(calls) >= 4:
+            raise KeyboardInterrupt
+        return next(results, False)
 
-    consumer.process_next_message = fake_process_next_message  # type: ignore[method-assign]
+    def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
 
-    # Act
-    consumer.start_consuming()
+    consumer._consume_once = fake_consume_once  # type: ignore[method-assign]
 
-    # Assert
-    assert calls == ["processed", "processed", "processed"]
+    # Act / Assert
+    with pytest.raises(KeyboardInterrupt):
+        consumer.start_consuming(idle_sleep_seconds=0.2, sleep_fn=fake_sleep)
+
+    assert calls == ["processed", "processed", "processed", "processed"]
+    assert slept == [0.2, 0.2]
+
+
+def test_When_StartingConsumeLoop_Expect_RabbitMqConnectionStaysOpenBetweenIdlePolls() -> (
+    None
+):
+    # Arrange
+    channel = RecordingChannel()
+    opened_connections: list[RecordingConnection] = []
+
+    def connection_factory() -> RecordingConnection:
+        connection = RecordingConnection(channel)
+        opened_connections.append(connection)
+        return connection
+
+    consumer = _build_rabbitmq_consumer(
+        channel=channel,
+        connection_factory=connection_factory,
+    )
+    slept: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+        if len(slept) >= 2:
+            raise KeyboardInterrupt
+
+    # Act / Assert
+    with pytest.raises(KeyboardInterrupt):
+        consumer.start_consuming(idle_sleep_seconds=0.2, sleep_fn=fake_sleep)
+
+    assert len(opened_connections) == 1
+    assert opened_connections[0].closed is True
+    assert slept == [0.2, 0.2]
 
 
 def test_When_PublishingValidationResult_Expect_ConfiguredResponseRoutingKeyAndPayloadEventType() -> (
@@ -673,6 +762,7 @@ def _build_rabbitmq_consumer(
     channel: RecordingChannel,
     handler: Any | None = None,
     publisher: Any | None = None,
+    connection_factory: Any | None = None,
 ) -> RabbitMQCustomerValidationConsumer:
     resolved_handler = handler or StubHandler(
         result=CustomerValidationHandlingResult(
@@ -684,8 +774,11 @@ def _build_rabbitmq_consumer(
     resolved_publisher = publisher or create_event_publisher(
         CustomerServiceSettings(event_publisher_backend="in-memory")
     )
+    resolved_connection_factory = connection_factory or (
+        lambda: RecordingConnection(channel)
+    )
     return RabbitMQCustomerValidationConsumer(
-        connection_factory=lambda: RecordingConnection(channel),
+        connection_factory=resolved_connection_factory,
         request_exchange="customer.exchange",
         request_routing_key="customer.request",
         input_queue="customer.validation.requests",

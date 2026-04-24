@@ -32,30 +32,49 @@ class CustomerValidationConsumer:
         self._use_case = use_case
 
     def handle(self, payload: dict[str, object]) -> CustomerValidationHandlingResult:
+        payload_snapshot = _build_payload_snapshot(payload)
+        logger.info(
+            "Received customer validation request payload=%s",
+            payload_snapshot,
+        )
         try:
             message = BookingCreatedMessage.from_payload(payload)
             self._validate_event_type(message.event_type)
         except ValueError as error:
             logger.warning(
-                (
-                    "Discarding BookingCreated message due to contract "
-                    "validation failure: %s"
-                ),
+                "Discarding BookingCreated message due to contract validation failure: %s payload=%s",
                 error,
+                payload_snapshot,
             )
             return CustomerValidationHandlingResult(should_ack=False, requeue=False)
 
         try:
             result = self._use_case.execute(str(message.customer_id))
         except CustomerNotFoundError:
+            logger.info(
+                "Customer validation completed with missing customer booking_id=%s customer_id=%s",
+                message.booking_id,
+                message.customer_id,
+            )
             return CustomerValidationHandlingResult(
                 should_ack=True,
                 requeue=False,
                 event=self._build_result_event(message=message, is_valid=False),
             )
         except Exception:
+            logger.exception(
+                "Customer validation failed booking_id=%s customer_id=%s",
+                message.booking_id,
+                message.customer_id,
+            )
             return CustomerValidationHandlingResult(should_ack=False, requeue=True)
 
+        logger.info(
+            "Customer validation completed booking_id=%s customer_id=%s is_valid=%s",
+            message.booking_id,
+            message.customer_id,
+            result.is_eligible,
+        )
         return CustomerValidationHandlingResult(
             should_ack=True,
             requeue=False,
@@ -83,3 +102,13 @@ class CustomerValidationConsumer:
             is_valid=is_valid,
             timestamp=datetime.now(UTC),
         )
+
+
+def _build_payload_snapshot(payload: dict[str, object]) -> dict[str, object | None]:
+    return {
+        "eventId": payload.get("eventId"),
+        "eventType": payload.get("eventType"),
+        "bookingId": payload.get("bookingId"),
+        "customerId": payload.get("customerId"),
+        "timestamp": payload.get("timestamp"),
+    }
