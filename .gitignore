@@ -4,5 +4,5 @@ __pycache__/
 .venv/
 *.sqlite
 .coverage
-.env
+.env.deploy
 .env.local

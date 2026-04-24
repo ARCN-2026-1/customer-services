@@ -1,6 +1,25 @@
 services:
+  customer-migration:
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND: rabbitmq
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-customer_service}
+      MYSQL_USER: ${MYSQL_USER:-customer_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-customer_app_local}
+      MYSQL_LOCAL_PORT: ${MYSQL_LOCAL_PORT:-3306}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-guest}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      CUSTOMER_SERVICE_JWT_SECRET: ${CUSTOMER_SERVICE_JWT_SECRET:-local-dev-secret}
+
   customer-service:
     depends_on:
+      customer-migration:
+        condition: service_completed_successfully
       mysql:
         condition: service_healthy
       rabbitmq:
@@ -19,6 +38,27 @@ services:
       CUSTOMER_SERVICE_JWT_SECRET: ${CUSTOMER_SERVICE_JWT_SECRET:-local-dev-secret}
     ports:
       - "${CUSTOMER_SERVICE_PORT:-8000}:8000"
+
+  customer-worker:
+    depends_on:
+      customer-migration:
+        condition: service_completed_successfully
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND: rabbitmq
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-customer_service}
+      MYSQL_USER: ${MYSQL_USER:-customer_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-customer_app_local}
+      MYSQL_LOCAL_PORT: ${MYSQL_LOCAL_PORT:-3306}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-guest}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      CUSTOMER_SERVICE_JWT_SECRET: ${CUSTOMER_SERVICE_JWT_SECRET:-local-dev-secret}
 
   mysql:
     image: mysql:8.4

@@ -29,7 +29,7 @@ Servicio encargado de gestionar clientes, autenticación básica del MVP y valid
 - `test/` — tests unitarios e integración
 - `scripts/validate.sh` — validación canónica del servicio
 - `Dockerfile` — imagen local del servicio
-- `docker-compose.yml` — compose base de despliegue para `customer-service` (app-only)
+- `docker-compose.yml` — compose base de despliegue para runtime completo (`customer-migration`, `customer-service`, `customer-worker`)
 - `docker-compose.dev.yml` — overlay local con MySQL + RabbitMQ
 - `alembic/` + `alembic.ini` — migraciones del esquema `customer-service`
 
@@ -80,16 +80,20 @@ Endpoints principales del MVP:
 
 ## Docker
 
-### Deploy / servidor (app-only)
+### Deploy / servidor (runtime del servicio)
 
-`docker-compose.yml` define una configuración base orientada a despliegue del servicio.
+`docker-compose.yml` define una configuración base orientada a despliegue del runtime completo del servicio.
 
 Incluye:
 
+- job de migraciones `customer-migration` (one-shot)
+- API HTTP `customer-service`
+- worker RabbitMQ `customer-worker` (`consumer.py`)
 - política de reinicio (`unless-stopped`)
 - variables runtime vía placeholders (`CUSTOMER_SERVICE_*`, `MYSQL_*`, `RABBITMQ_*`)
 - mapeo de puerto configurable (`${CUSTOMER_SERVICE_PORT:-8000}:8000`)
 - healthcheck HTTP sobre `/health`
+- orden de arranque: API y worker esperan a que `customer-migration` termine en éxito
 
 Ejemplo usando archivo de entorno no versionado:
 
@@ -101,46 +105,44 @@ docker compose --env-file .env.deploy -f docker-compose.yml up -d
 
 Para desarrollo local con infraestructura incluida, el repo usa composición de archivos:
 
-- `docker-compose.yml` — base app-only (también usada en deploy)
+- `docker-compose.yml` — base runtime (`customer-migration`, `customer-service`, `customer-worker`) usada en deploy
 - `docker-compose.dev.yml` — overlay local para infraestructura, `depends_on` y puertos de dev
+- `.env.local` — variables de desarrollo local para MySQL y RabbitMQ del stack dev
+- `.env.deploy` — variables para despliegue con infraestructura externa
 
 Usados juntos levantan:
 
+- `customer-migration`
 - `customer-service`
+- `customer-worker`
 - `mysql`
 - `rabbitmq`
 
-### Bootstrap de schema local
-
-Antes de usar la API contra MySQL, corré las migraciones del servicio:
-
-```bash
-uv run alembic upgrade head
-```
+`customer-migration` corre `alembic upgrade head` automáticamente dentro del compose.
 
 El schema usa charset `utf8mb4` y collation `utf8mb4_0900_ai_ci`.
 
 ### Levantar el stack
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 ### Bajar el stack
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml down
 ```
 
 Si además querés limpiar el volumen de RabbitMQ:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml down -v
 ```
 
 ### Variables que compose resuelve
 
-Cuando usás ambos archivos (`docker-compose.yml` + `docker-compose.dev.yml`), `customer-service` recibe:
+Cuando usás ambos archivos (`docker-compose.yml` + `docker-compose.dev.yml`), `customer-migration`, `customer-service` y `customer-worker` reciben el mismo bloque runtime:
 
 - `CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND=${CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND:-rabbitmq}`
 - `CUSTOMER_SERVICE_JWT_SECRET=${CUSTOMER_SERVICE_JWT_SECRET:-local-dev-secret}`
@@ -154,14 +156,25 @@ Cuando usás ambos archivos (`docker-compose.yml` + `docker-compose.dev.yml`), `
 - `RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS:-guest}`
 - `RABBITMQ_PORT=${RABBITMQ_PORT:-5672}`
 - `RABBITMQ_UI_PORT=${RABBITMQ_UI_PORT:-15672}`
+- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_EXCHANGE=customer.exchange`
+- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_EXCHANGE_TYPE=direct`
+- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_ROUTING_KEY=customer.request`
+- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_EXCHANGE=customer.exchange`
+- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_EXCHANGE_TYPE=direct`
+- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_ROUTING_KEY=customer.response.key`
 
 En deploy podés optar por URLs directas (`CUSTOMER_SERVICE_DATABASE_URL`, `CUSTOMER_SERVICE_RABBITMQ_URL`) o por variables desglosadas (`MYSQL_*`, `RABBITMQ_*`).
 
 Además, MySQL local usa `MYSQL_ROOT_PASSWORD` (solo infraestructura local).
 
-El repo incluye `.env.example` con placeholders seguros. Podés copiarlo a `.env.local` (no versionado) y ajustar valores según tu entorno.
+El repo incluye `.env.example` con placeholders seguros. Además, este repo mantiene separados:
 
-Podés definir overrides locales en `.env.local`, por ejemplo:
+- `.env.local` para desarrollo local
+- `.env.deploy` para despliegue
+
+Las variables de contrato RabbitMQ también quedan explícitas en esos archivos para evitar depender solo de defaults implícitos.
+
+El `.env.local` de desarrollo usa valores como estos:
 
 ```env
 MYSQL_DATABASE=customer_service
@@ -180,6 +193,7 @@ RABBITMQ_UI_PORT=15672
 - API health: `http://localhost:8000/health`
 - MySQL: `localhost:${MYSQL_LOCAL_PORT:-3306}` (credenciales definidas por tus variables locales)
 - RabbitMQ management: `http://localhost:${RABBITMQ_UI_PORT:-15672}` (credenciales definidas por tus variables locales)
+- Worker activo: logs del consumer con `docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml logs -f customer-worker`
 
 ## Notas
 

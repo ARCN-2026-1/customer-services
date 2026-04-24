@@ -426,16 +426,20 @@ Capas reales del repo:
 
 ## Docker
 
-### Deploy / servidor (app-only)
+### Deploy / servidor (runtime del servicio)
 
-`docker-compose.yml` es la base de despliegue del servicio `customer-service`.
+`docker-compose.yml` es la base de despliegue del runtime completo de `customer-service`.
 
 Incluye:
 
 - `restart: unless-stopped`
+- job one-shot `customer-migration` que ejecuta `alembic upgrade head`
+- API `customer-service`
+- worker `customer-worker` que ejecuta `consumer.py`
 - mapeo de puerto configurable (`${CUSTOMER_SERVICE_PORT:-8000}:8000`)
 - healthcheck HTTP (`/health`)
 - variables runtime por placeholders (`CUSTOMER_SERVICE_*`, `MYSQL_*`, `RABBITMQ_*`) sin secretos hardcodeados
+- dependencia de arranque para que API y worker esperen a `customer-migration`
 
 Comando sugerido (archivo de entorno no versionado):
 
@@ -447,46 +451,46 @@ docker compose --env-file .env.deploy -f docker-compose.yml up -d
 
 Para demo y desarrollo local simple, el repo incluye en la raíz:
 
-- `docker-compose.yml` — compose base app-only (reutilizable en deploy)
+- `docker-compose.yml` — compose base runtime (`customer-migration`, `customer-service`, `customer-worker`), reutilizable en deploy
 - `docker-compose.dev.yml` — overlay con infraestructura local y puertos
+- `.env.local` — variables de desarrollo local
+- `.env.deploy` — variables para infraestructura externa
 
 Usados juntos levantan:
 
+- `customer-migration`
 - `customer-service`
+- `customer-worker`
 - `mysql`
 - `rabbitmq`
+
+`customer-migration` aplica Alembic automáticamente dentro del stack.
 
 ### Levantar el stack
 
 Desde la raíz del repo:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 ### Bajar el stack
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml down
 ```
 
 Si además querés limpiar el volumen nombrado de RabbitMQ:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
-```
-
-### Bootstrap de schema local
-
-Antes de usar la API contra MySQL, corré las migraciones del servicio:
-
-```bash
-uv run alembic upgrade head
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml down -v
 ```
 
 El schema usa charset `utf8mb4` y collation `utf8mb4_0900_ai_ci`.
 
 ### Variables relevantes en compose
+
+`customer-migration`, `customer-service` y `customer-worker` comparten el mismo bloque de runtime para evitar drift entre API y worker.
 
 - `CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND=${CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND:-rabbitmq}`
 - `CUSTOMER_SERVICE_JWT_SECRET=${CUSTOMER_SERVICE_JWT_SECRET:-local-dev-secret}`
@@ -500,18 +504,30 @@ El schema usa charset `utf8mb4` y collation `utf8mb4_0900_ai_ci`.
 - `RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS:-guest}`
 - `RABBITMQ_PORT=${RABBITMQ_PORT:-5672}`
 - `RABBITMQ_UI_PORT=${RABBITMQ_UI_PORT:-15672}`
+- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_EXCHANGE=customer.exchange`
+- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_EXCHANGE_TYPE=direct`
+- `CUSTOMER_SERVICE_RABBITMQ_REQUEST_ROUTING_KEY=customer.request`
+- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_EXCHANGE=customer.exchange`
+- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_EXCHANGE_TYPE=direct`
+- `CUSTOMER_SERVICE_RABBITMQ_RESPONSE_ROUTING_KEY=customer.response.key`
 
 `MYSQL_ROOT_PASSWORD` aplica al contenedor MySQL local (infra), no a la lógica runtime del servicio.
 
 En deploy se pueden usar las variantes por URL completa (`CUSTOMER_SERVICE_DATABASE_URL`, `CUSTOMER_SERVICE_RABBITMQ_URL`) para evitar duplicar variables.
 
-Para evitar credenciales en git, usá `.env.local` (no versionado) para tus valores reales.
+La separación recomendada es:
+
+- `.env.local` para desarrollo local con `docker-compose.dev.yml`
+- `.env.deploy` para despliegue con infraestructura externa
+
+Las variables de contrato de RabbitMQ quedan explícitas en ambos archivos para que el contrato sea auditable sin depender solo de defaults del código.
 
 ### Verificación rápida
 
 - API health: `http://localhost:8000/health`
 - MySQL: `localhost:${MYSQL_LOCAL_PORT:-3306}` (credenciales tomadas de tus variables locales)
 - RabbitMQ management: `http://localhost:${RABBITMQ_UI_PORT:-15672}` (credenciales tomadas de tus variables locales)
+- Worker activo: `docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.dev.yml logs -f customer-worker`
 
 ### Notas
 

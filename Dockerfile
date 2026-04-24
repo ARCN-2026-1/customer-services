@@ -17,6 +17,7 @@ COPY alembic.ini ./
 COPY alembic/ ./alembic/
 COPY internal/ ./internal/
 COPY main.py ./
+COPY consumer.py ./
 
 RUN mkdir -p data && chown -R app:app /app && uv sync --frozen --no-dev
 
