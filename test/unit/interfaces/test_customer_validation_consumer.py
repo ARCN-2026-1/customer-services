@@ -50,9 +50,8 @@ def test_When_HandlingEligibleBookingCreatedEvent_Expect_AckedValidResult() -> N
     assert result.event.is_valid is True
 
 
-def test_When_HandlingIneligibleBookingCreatedEvent_Expect_ResponseUsesBookingCompatibleEventType() -> (
-    None
-):
+def test_When_HandlingIneligibleBookingCreatedEvent_Expect_BookingCompatibleEventType(
+) -> None:
     # Arrange
     customer_id = uuid4()
     booking_id = uuid4()
@@ -82,7 +81,8 @@ def test_When_HandlingIneligibleBookingCreatedEvent_Expect_ResponseUsesBookingCo
     assert result.event.is_valid is False
 
 
-def test_When_EventTypeUsesBookingExternalValue_Expect_MessageAcceptedAndAcked() -> None:
+def test_When_EventTypeUsesBookingExternalValue_Expect_MessageAcceptedAndAcked(
+) -> None:
     # Arrange
     customer_id = uuid4()
     booking_id = uuid4()

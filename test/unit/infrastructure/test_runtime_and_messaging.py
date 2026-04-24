@@ -520,9 +520,8 @@ def test_When_QueueIsTemporarilyEmpty_Expect_ConsumerKeepsPollingWithIdleSleep()
     assert slept == [0.2, 0.2]
 
 
-def test_When_StartingConsumeLoop_Expect_RabbitMqConnectionStaysOpenBetweenIdlePolls() -> (
-    None
-):
+def test_When_StartingConsumeLoop_Expect_RabbitMqConnectionStaysOpenBetweenIdlePolls(
+) -> None:
     # Arrange
     channel = RecordingChannel()
     opened_connections: list[RecordingConnection] = []
@@ -552,9 +551,7 @@ def test_When_StartingConsumeLoop_Expect_RabbitMqConnectionStaysOpenBetweenIdleP
     assert slept == [0.2, 0.2]
 
 
-def test_When_PublishingValidationResult_Expect_ConfiguredResponseRoutingKeyAndPayloadEventType() -> (
-    None
-):
+def test_When_PublishingValidationResult_Expect_ConfiguredRoutingAndPayload() -> None:
     # Arrange
     channel = RecordingChannel()
     publisher = messaging_factory.RabbitMQEventPublisher(

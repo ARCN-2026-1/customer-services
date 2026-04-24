@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -21,7 +20,10 @@ def test_When_ReadingBaseCompose_Expect_DeployReadyRuntimeDefinition() -> None:
     assert "CUSTOMER_SERVICE_JWT_SECRET:" in compose_content
     assert "CUSTOMER_SERVICE_DATABASE_URL:" in compose_content
     assert "CUSTOMER_SERVICE_RABBITMQ_URL:" in compose_content
-    assert "image: ${CUSTOMER_SERVICE_IMAGE:-customer-service:latest}" in compose_content
+    assert (
+        "image: ${CUSTOMER_SERVICE_IMAGE:-customer-service:latest}"
+        in compose_content
+    )
     assert "build:" in compose_content
     assert "condition: service_completed_successfully" in compose_content
     assert "command: [\".venv/bin/alembic\", \"upgrade\", \"head\"]" in compose_content
@@ -88,7 +90,8 @@ def test_When_ReadingLocalDockerDocs_Expect_CombinedComposeCommandDocumented() -
     assert "docker-compose.dev.yml" in service_doc_content
 
 
-def test_When_ReadingDeployDockerDocs_Expect_BaseComposeDeployCommandDocumented() -> None:
+def test_When_ReadingDeployDockerDocs_Expect_BaseComposeDeployCommandDocumented(
+) -> None:
     # Arrange
     readme_content = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     service_doc_content = (

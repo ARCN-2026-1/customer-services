@@ -3,7 +3,6 @@ from urllib.parse import quote_plus
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 ALEMBIC_INI_DEFAULT_DATABASE_URL = (
     "mysql+pymysql://customer:secret@localhost:3306/customer_service?charset=utf8mb4"
 )
@@ -28,7 +27,11 @@ class CustomerServiceSettings(BaseSettings):
     )
     db_user: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("CUSTOMER_SERVICE_DB_USER", "DB_USER", "MYSQL_USER"),
+        validation_alias=AliasChoices(
+            "CUSTOMER_SERVICE_DB_USER",
+            "DB_USER",
+            "MYSQL_USER",
+        ),
     )
     db_password: str | None = Field(
         default=None,
@@ -38,7 +41,11 @@ class CustomerServiceSettings(BaseSettings):
     )
     db_name: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("CUSTOMER_SERVICE_DB_NAME", "DB_NAME", "MYSQL_DATABASE"),
+        validation_alias=AliasChoices(
+            "CUSTOMER_SERVICE_DB_NAME",
+            "DB_NAME",
+            "MYSQL_DATABASE",
+        ),
     )
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"
@@ -50,11 +57,17 @@ class CustomerServiceSettings(BaseSettings):
     )
     rabbitmq_host: str = Field(
         default="localhost",
-        validation_alias=AliasChoices("CUSTOMER_SERVICE_RABBITMQ_HOST", "RABBITMQ_HOST"),
+        validation_alias=AliasChoices(
+            "CUSTOMER_SERVICE_RABBITMQ_HOST",
+            "RABBITMQ_HOST",
+        ),
     )
     rabbitmq_port: int = Field(
         default=5672,
-        validation_alias=AliasChoices("CUSTOMER_SERVICE_RABBITMQ_PORT", "RABBITMQ_PORT"),
+        validation_alias=AliasChoices(
+            "CUSTOMER_SERVICE_RABBITMQ_PORT",
+            "RABBITMQ_PORT",
+        ),
     )
     rabbitmq_user: str = Field(
         default="guest",
@@ -89,7 +102,10 @@ class CustomerServiceSettings(BaseSettings):
             )
         return value
 
-    @field_validator("rabbitmq_request_exchange_type", "rabbitmq_response_exchange_type")
+    @field_validator(
+        "rabbitmq_request_exchange_type",
+        "rabbitmq_response_exchange_type",
+    )
     @classmethod
     def validate_exchange_type(cls, value: str) -> str:
         if value not in {"direct", "topic", "fanout", "headers"}:

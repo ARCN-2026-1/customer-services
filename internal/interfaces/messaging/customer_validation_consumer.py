@@ -42,7 +42,10 @@ class CustomerValidationConsumer:
             self._validate_event_type(message.event_type)
         except ValueError as error:
             logger.warning(
-                "Discarding BookingCreated message due to contract validation failure: %s payload=%s",
+                (
+                    "Discarding BookingCreated message due to contract validation "
+                    "failure: %s payload=%s"
+                ),
                 error,
                 payload_snapshot,
             )
@@ -52,7 +55,10 @@ class CustomerValidationConsumer:
             result = self._use_case.execute(str(message.customer_id))
         except CustomerNotFoundError:
             logger.info(
-                "Customer validation completed with missing customer booking_id=%s customer_id=%s",
+                (
+                    "Customer validation completed with missing customer "
+                    "booking_id=%s customer_id=%s"
+                ),
                 message.booking_id,
                 message.customer_id,
             )
