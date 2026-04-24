@@ -88,7 +88,11 @@ class RabbitMQCustomerValidationConsumer:
         )
         if method_frame is None:
             return False
-        return self._process_delivery(channel=channel, method_frame=method_frame, body=body)
+        return self._process_delivery(
+            channel=channel,
+            method_frame=method_frame,
+            body=body,
+        )
 
     def _process_delivery(self, *, channel: Any, method_frame: Any, body: Any) -> bool:
         try:
@@ -96,7 +100,10 @@ class RabbitMQCustomerValidationConsumer:
             payload = json.loads(body_text)
         except (UnicodeDecodeError, json.JSONDecodeError):
             logger.warning(
-                "Discarding customer validation message due to invalid JSON delivery_tag=%s",
+                (
+                    "Discarding customer validation message due to invalid JSON "
+                    "delivery_tag=%s"
+                ),
                 method_frame.delivery_tag,
             )
             channel.basic_nack(method_frame.delivery_tag, requeue=False)
@@ -114,7 +121,10 @@ class RabbitMQCustomerValidationConsumer:
         if not isinstance(payload, dict):
             channel.basic_nack(method_frame.delivery_tag, requeue=False)
             logger.warning(
-                "Discarding customer validation message because payload is not an object delivery_tag=%s payload_type=%s",
+                (
+                    "Discarding customer validation message because payload is not "
+                    "an object delivery_tag=%s payload_type=%s"
+                ),
                 method_frame.delivery_tag,
                 type(payload).__name__,
             )
@@ -126,7 +136,10 @@ class RabbitMQCustomerValidationConsumer:
 
         result = self._handler.handle(payload)
         logger.info(
-            "Customer validation handled delivery_tag=%s should_ack=%s requeue=%s has_event=%s",
+            (
+                "Customer validation handled delivery_tag=%s should_ack=%s "
+                "requeue=%s has_event=%s"
+            ),
             method_frame.delivery_tag,
             result.should_ack,
             result.requeue,
@@ -135,7 +148,10 @@ class RabbitMQCustomerValidationConsumer:
         if result.event is not None:
             try:
                 logger.info(
-                    "Publishing customer validation result delivery_tag=%s event_type=%s booking_id=%s customer_id=%s is_valid=%s",
+                    (
+                        "Publishing customer validation result delivery_tag=%s "
+                        "event_type=%s booking_id=%s customer_id=%s is_valid=%s"
+                    ),
                     method_frame.delivery_tag,
                     result.event.event_type,
                     result.event.booking_id,
@@ -144,14 +160,20 @@ class RabbitMQCustomerValidationConsumer:
                 )
                 self._event_publisher.publish(result.event)
                 logger.info(
-                    "Published customer validation result delivery_tag=%s event_type=%s",
+                    (
+                        "Published customer validation result delivery_tag=%s "
+                        "event_type=%s"
+                    ),
                     method_frame.delivery_tag,
                     result.event.event_type,
                 )
             except EventPublicationError:
                 channel.basic_nack(method_frame.delivery_tag, requeue=True)
                 logger.exception(
-                    "Failed publishing customer validation result delivery_tag=%s decision=nack requeue=true",
+                    (
+                        "Failed publishing customer validation result delivery_tag=%s "
+                        "decision=nack requeue=true"
+                    ),
                     method_frame.delivery_tag,
                 )
                 return True
