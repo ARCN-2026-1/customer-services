@@ -1,28 +1,24 @@
 FROM python:3.11-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    UV_LINK_MODE=copy
+# Instalamos uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Configuración de entorno
+ENV UV_SYSTEM_PYTHON=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir uv
-
-RUN addgroup --system app && adduser --system --ingroup app app
-
+# Dependencias
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-cache --no-dev
 
-COPY alembic.ini ./
-COPY alembic/ ./alembic/
-COPY internal/ ./internal/
-COPY main.py ./
-COPY consumer.py ./
+# Código fuente
+COPY . .
 
-RUN mkdir -p data && chown -R app:app /app && uv sync --frozen --no-dev
+# Exponer puerto de Customer API
+EXPOSE 8001
 
-USER app
-
-EXPOSE 8000
-
-CMD [".venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Comando por defecto para la API
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
