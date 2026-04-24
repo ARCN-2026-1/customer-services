@@ -1,10 +1,10 @@
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from internal.application.commands.register_customer import RegisterCustomerCommand
 from internal.application.usecases.register_customer import RegisterCustomer
@@ -14,7 +14,6 @@ from internal.domain.valueobjects.customer_status import CustomerStatus
 from internal.domain.valueobjects.email import Email
 from internal.infrastructure.auth.bcrypt_password_hasher import BcryptPasswordHasher
 from internal.infrastructure.config.settings import CustomerServiceSettings
-from internal.infrastructure.persistence.models import Base
 from internal.infrastructure.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
 )
@@ -22,12 +21,11 @@ from internal.infrastructure.persistence.unit_of_work import create_session_fact
 from internal.interfaces.rest.app import create_app
 
 
-def test_When_CustomerIsPersisted_Expect_RepositoryRoundTripPreservesAggregateData() -> (  # noqa: E501
-    None
-):
+def test_When_CustomerIsPersisted_Expect_RepositoryRoundTripPreservesAggregateData(  # noqa: E501
+    mysql_customer_runtime,
+) -> None:
     # Arrange
-    session_factory = create_session_factory("sqlite://")
-    Base.metadata.create_all(bind=session_factory.kw["bind"])
+    session_factory = create_session_factory(mysql_customer_runtime.database_url)
     repository = SqlAlchemyCustomerRepository(session_factory)
     customer = Customer.register(
         customer_id=uuid4(),
@@ -49,12 +47,11 @@ def test_When_CustomerIsPersisted_Expect_RepositoryRoundTripPreservesAggregateDa
     assert loaded_customer.status is CustomerStatus.ACTIVE
 
 
-def test_When_CustomerEmailAlreadyExists_Expect_RepositoryRejectsDuplicateEmail() -> (
-    None
-):
+def test_When_CustomerEmailAlreadyExists_Expect_RepositoryRejectsDuplicateEmail(
+    mysql_customer_runtime,
+) -> None:
     # Arrange
-    session_factory = create_session_factory("sqlite://")
-    Base.metadata.create_all(bind=session_factory.kw["bind"])
+    session_factory = create_session_factory(mysql_customer_runtime.database_url)
     repository = SqlAlchemyCustomerRepository(session_factory)
     first_customer = Customer.register(
         customer_id=uuid4(),
@@ -80,10 +77,10 @@ def test_When_CustomerEmailAlreadyExists_Expect_RepositoryRejectsDuplicateEmail(
 
 
 def test_When_RegisteringAndLoggingInThroughApi_Expect_AuthResponsesWithoutPasswordHash(  # noqa: E501
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     # Act
@@ -111,10 +108,13 @@ def test_When_RegisteringAndLoggingInThroughApi_Expect_AuthResponsesWithoutPassw
 
 
 def test_When_CustomerIsInactive_Expect_ReservationEligibilityEndpointReturnsFalse(  # noqa: E501
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path, seed_customer_status=CustomerStatus.INACTIVE)
+    app = _build_app(
+        mysql_customer_runtime_factory,
+        seed_customer_status=CustomerStatus.INACTIVE,
+    )
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
 
@@ -131,10 +131,13 @@ def test_When_CustomerIsInactive_Expect_ReservationEligibilityEndpointReturnsFal
 
 
 def test_When_AdminResolvesSuspension_Expect_CustomerReturnsToActive(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path, seed_customer_status=CustomerStatus.SUSPENDED)
+    app = _build_app(
+        mysql_customer_runtime_factory,
+        seed_customer_status=CustomerStatus.SUSPENDED,
+    )
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
     admin_token = app.state.admin_token
@@ -151,10 +154,10 @@ def test_When_AdminResolvesSuspension_Expect_CustomerReturnsToActive(
 
 
 def test_When_UpdatingCustomerWithoutBearerToken_Expect_Unauthorized(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
 
@@ -170,10 +173,10 @@ def test_When_UpdatingCustomerWithoutBearerToken_Expect_Unauthorized(
 
 
 def test_When_UpdatingCustomerWithNonAdminRole_Expect_Forbidden(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
     customer_token = app.state.customer_token
@@ -190,9 +193,11 @@ def test_When_UpdatingCustomerWithNonAdminRole_Expect_Forbidden(
     assert response.json() == {"detail": "Admin role is required"}
 
 
-def test_When_AdminUpdatesCustomer_Expect_CustomerInfoUpdated(tmp_path: Path) -> None:
+def test_When_AdminUpdatesCustomer_Expect_CustomerInfoUpdated(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
     admin_token = app.state.admin_token
@@ -216,9 +221,11 @@ def test_When_AdminUpdatesCustomer_Expect_CustomerInfoUpdated(tmp_path: Path) ->
     }
 
 
-def test_When_RegisteringDuplicateEmail_Expect_BadRequest(tmp_path: Path) -> None:
+def test_When_RegisteringDuplicateEmail_Expect_BadRequest(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     client.post(
@@ -248,10 +255,10 @@ def test_When_RegisteringDuplicateEmail_Expect_BadRequest(tmp_path: Path) -> Non
 
 
 def test_When_AuthenticatingWithInvalidPassword_Expect_BadRequest(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     # Act
@@ -266,10 +273,13 @@ def test_When_AuthenticatingWithInvalidPassword_Expect_BadRequest(
 
 
 def test_When_AdminSuspendsInactiveCustomer_Expect_ConflictResponse(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path, seed_customer_status=CustomerStatus.INACTIVE)
+    app = _build_app(
+        mysql_customer_runtime_factory,
+        seed_customer_status=CustomerStatus.INACTIVE,
+    )
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
     admin_token = app.state.admin_token
@@ -287,10 +297,10 @@ def test_When_AdminSuspendsInactiveCustomer_Expect_ConflictResponse(
 
 
 def test_When_AdminUsesInvalidBearerToken_Expect_UnauthorizedResponse(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
 
@@ -307,10 +317,10 @@ def test_When_AdminUsesInvalidBearerToken_Expect_UnauthorizedResponse(
 
 
 def test_When_EventPublicationFailsDuringRegistration_Expect_ServiceUnavailable(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     app.state.event_publisher = FailingEventPublisher()
     client = TestClient(app)
 
@@ -331,12 +341,12 @@ def test_When_EventPublicationFailsDuringRegistration_Expect_ServiceUnavailable(
 
 
 def test_When_RegisteringCustomer_Expect_AuthAttemptAndSuccessAreLogged(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Arrange
     caplog.set_level(logging.INFO)
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     # Act
@@ -364,12 +374,12 @@ def test_When_RegisteringCustomer_Expect_AuthAttemptAndSuccessAreLogged(
 
 
 def test_When_LoggingInCustomer_Expect_AuthAttemptAndSuccessAreLogged(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Arrange
     caplog.set_level(logging.INFO)
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     # Act
@@ -386,12 +396,12 @@ def test_When_LoggingInCustomer_Expect_AuthAttemptAndSuccessAreLogged(
 
 
 def test_When_AdminSuspendsCustomer_Expect_StatusChangeIsLogged(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Arrange
     caplog.set_level(logging.INFO)
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
     admin_token = app.state.admin_token
@@ -409,12 +419,12 @@ def test_When_AdminSuspendsCustomer_Expect_StatusChangeIsLogged(
 
 
 def test_When_UnexpectedErrorOccurs_Expect_InternalServerErrorAndExceptionLogged(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Arrange
     caplog.set_level(logging.ERROR)
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     app.state.customer_repository = ExplodingCustomerRepository()
     client = TestClient(app, raise_server_exceptions=False)
 
@@ -429,9 +439,11 @@ def test_When_UnexpectedErrorOccurs_Expect_InternalServerErrorAndExceptionLogged
     )
 
 
-def test_When_RequestingUnknownCustomer_Expect_NotFoundResponse(tmp_path: Path) -> None:
+def test_When_RequestingUnknownCustomer_Expect_NotFoundResponse(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     # Act
@@ -443,10 +455,10 @@ def test_When_RequestingUnknownCustomer_Expect_NotFoundResponse(tmp_path: Path) 
 
 
 def test_When_CheckingUnknownCustomerEligibility_Expect_NotFoundResponse(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     # Act
@@ -457,9 +469,11 @@ def test_When_CheckingUnknownCustomerEligibility_Expect_NotFoundResponse(
     assert response.json() == {"detail": "Customer not found"}
 
 
-def test_When_UpdatingUnknownCustomer_Expect_NotFoundResponse(tmp_path: Path) -> None:
+def test_When_UpdatingUnknownCustomer_Expect_NotFoundResponse(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
     admin_token = app.state.admin_token
 
@@ -476,10 +490,10 @@ def test_When_UpdatingUnknownCustomer_Expect_NotFoundResponse(tmp_path: Path) ->
 
 
 def test_When_AdminDeactivatesActiveCustomer_Expect_CustomerBecomesInactive(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
     admin_token = app.state.admin_token
@@ -497,10 +511,13 @@ def test_When_AdminDeactivatesActiveCustomer_Expect_CustomerBecomesInactive(
 
 
 def test_When_AdminActivatesInactiveCustomer_Expect_CustomerBecomesActive(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path, seed_customer_status=CustomerStatus.INACTIVE)
+    app = _build_app(
+        mysql_customer_runtime_factory,
+        seed_customer_status=CustomerStatus.INACTIVE,
+    )
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
     admin_token = app.state.admin_token
@@ -517,10 +534,10 @@ def test_When_AdminActivatesInactiveCustomer_Expect_CustomerBecomesActive(
 
 
 def test_When_AdminSuspendsActiveCustomer_Expect_CustomerBecomesSuspended(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
     customer_id = app.state.seed_customer_id
     admin_token = app.state.admin_token
@@ -538,10 +555,10 @@ def test_When_AdminSuspendsActiveCustomer_Expect_CustomerBecomesSuspended(
 
 
 def test_When_AdminListsCustomers_Expect_RegisteredCustomersReturned(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
     admin_token = app.state.admin_token
 
@@ -565,9 +582,11 @@ def test_When_AdminListsCustomers_Expect_RegisteredCustomersReturned(
     ]
 
 
-def test_When_HealthEndpointIsCalled_Expect_NoContent(tmp_path: Path) -> None:
+def test_When_HealthEndpointIsCalled_Expect_NoContent(
+    mysql_customer_runtime_factory,
+) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     # Act
@@ -579,10 +598,10 @@ def test_When_HealthEndpointIsCalled_Expect_NoContent(tmp_path: Path) -> None:
 
 
 def test_When_RequestingOpenApiSchema_Expect_GlobalMetadataAndTaggedEndpointDocumentation(  # noqa: E501
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     # Act
@@ -634,10 +653,10 @@ def test_When_RequestingOpenApiSchema_Expect_GlobalMetadataAndTaggedEndpointDocu
 
 
 def test_When_RequestingOpenApiSchema_Expect_BearerSecurityAndSchemaExamplesDocumented(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange
-    app = _build_app(tmp_path)
+    app = _build_app(mysql_customer_runtime_factory)
     client = TestClient(app)
 
     # Act
@@ -676,25 +695,63 @@ def test_When_RequestingOpenApiSchema_Expect_BearerSecurityAndSchemaExamplesDocu
     )
 
 
-def test_When_BuildingIntegrationApps_Expect_IsolatedSqliteDatabasePerApp(
-    tmp_path: Path,
+def test_When_BuildingIntegrationApps_Expect_IsolatedMySqlDatabasePerApp(
+    mysql_customer_runtime_factory,
 ) -> None:
     # Arrange / Act
-    first_app = _build_app(tmp_path)
-    second_app = _build_app(tmp_path)
+    first_app = _build_app(mysql_customer_runtime_factory)
+    second_app = _build_app(mysql_customer_runtime_factory)
 
     # Assert
     assert first_app.state.database_url != second_app.state.database_url
-    assert first_app.state.database_url.startswith("sqlite:///")
-    assert second_app.state.database_url.startswith("sqlite:///")
+    assert first_app.state.database_url.startswith("mysql+pymysql://")
+    assert second_app.state.database_url.startswith("mysql+pymysql://")
+
+
+def test_When_RunningAlembicAgainstCustomerSchema_Expect_OnlyCustomerTables(
+    mysql_customer_runtime,
+) -> None:
+    # Arrange
+    engine = create_session_factory(mysql_customer_runtime.database_url).kw["bind"]
+
+    # Act
+    with engine.connect() as connection:
+        tables = (
+            connection.execute(
+                text(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = DATABASE() ORDER BY table_name"
+                )
+            )
+            .scalars()
+            .all()
+        )
+        customer_table = connection.execute(
+            text(
+                "SELECT table_collation FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = 'customers'"
+            )
+        ).scalar_one()
+        database_collation = connection.execute(
+            text("SELECT @@collation_database")
+        ).scalar_one()
+        database_charset = connection.execute(
+            text("SELECT @@character_set_database")
+        ).scalar_one()
+
+    # Assert
+    assert tables == ["alembic_version", "customers"]
+    assert customer_table == "utf8mb4_0900_ai_ci"
+    assert database_collation == "utf8mb4_0900_ai_ci"
+    assert database_charset == "utf8mb4"
 
 
 def _build_app(
-    tmp_path: Path,
+    mysql_customer_runtime_factory,
     seed_customer_status: CustomerStatus = CustomerStatus.ACTIVE,
 ) -> object:
-    database_path = tmp_path / f"customer-service-{uuid4()}.sqlite"
-    database_url = f"sqlite:///{database_path}"
+    runtime = mysql_customer_runtime_factory()
+    database_url = runtime.database_url
 
     settings = CustomerServiceSettings(
         database_url=database_url,

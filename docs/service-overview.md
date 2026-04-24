@@ -4,6 +4,8 @@
 
 Gestionar clientes y su estado dentro del sistema. En el MVP actual, este servicio también resuelve la autenticación básica del usuario, por lo que `Customer` representa tanto al cliente del negocio como al usuario autenticable del sistema.
 
+> Este documento existe para dar contexto rápido. Para detalle operativo, endpoints, eventos y diagramas del runtime, ver `docs/services/customer-service.md`.
+
 ## Responsabilidades principales
 
 - registrar clientes con email y contraseña
@@ -32,8 +34,13 @@ Gestionar clientes y su estado dentro del sistema. En el MVP actual, este servic
 - gestionar reservas
 - procesar pagos
 - decidir reglas internas de Booking
-- consumir eventos entrantes en el MVP
 - implementar refresh tokens o revocación compleja
+
+## Entradas y salidas de integración
+
+- síncrona: `GET /customers/{customerId}` y `GET /customers/{customerId}/reservation-eligibility`
+- asíncrona saliente: eventos de ciclo de vida del cliente
+- asíncrona entrante: consumo de `BookingCreated` para responder con `CustomerValidationResult`
 
 ## Estados del cliente
 
@@ -55,7 +62,7 @@ Gestionar clientes y su estado dentro del sistema. En el MVP actual, este servic
 ## Integración
 
 - síncrona: consulta de datos y elegibilidad vía REST
-- asíncrona: publicación de eventos mediante RabbitMQ
+- asíncrona: consumo y publicación de eventos mediante RabbitMQ
 
 ## Validación técnica
 

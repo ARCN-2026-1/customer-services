@@ -43,11 +43,75 @@ def test_When_HandlingEligibleBookingCreatedEvent_Expect_AckedValidResult() -> N
     assert result.event is not None
     assert result.event.event_id != inbound_event_id
     assert isinstance(result.event.event_id, UUID)
-    assert result.event.event_type == "CustomerValidationResult"
+    assert result.event.event_type == "BOOKING_Ok"
     assert not hasattr(result.event, "event_name")
     assert result.event.booking_id == booking_id
     assert result.event.customer_id == customer_id
     assert result.event.is_valid is True
+
+
+def test_When_HandlingIneligibleBookingCreatedEvent_Expect_ResponseUsesBookingCompatibleEventType() -> (
+    None
+):
+    # Arrange
+    customer_id = uuid4()
+    booking_id = uuid4()
+    use_case = StubValidationUseCase(
+        result=ReservationEligibilityDTO(
+            customer_id=str(customer_id),
+            status="INACTIVE",
+            is_eligible=False,
+        )
+    )
+    consumer = CustomerValidationConsumer(use_case)
+
+    # Act
+    result = consumer.handle(
+        {
+            "eventId": str(uuid4()),
+            "eventType": "BookingCreated",
+            "bookingId": str(booking_id),
+            "customerId": str(customer_id),
+            "timestamp": "2026-04-22T00:00:00+00:00",
+        }
+    )
+
+    # Assert
+    assert result.event is not None
+    assert result.event.event_type == "BOOKING_Ok"
+    assert result.event.is_valid is False
+
+
+def test_When_EventTypeUsesBookingExternalValue_Expect_MessageAcceptedAndAcked() -> None:
+    # Arrange
+    customer_id = uuid4()
+    booking_id = uuid4()
+    use_case = StubValidationUseCase(
+        result=ReservationEligibilityDTO(
+            customer_id=str(customer_id),
+            status="ACTIVE",
+            is_eligible=True,
+        )
+    )
+    consumer = CustomerValidationConsumer(use_case)
+
+    # Act
+    result = consumer.handle(
+        {
+            "eventId": str(uuid4()),
+            "eventType": "BOOKING_Ok",
+            "bookingId": str(booking_id),
+            "customerId": str(customer_id),
+            "timestamp": "2026-04-22T00:00:00+00:00",
+        }
+    )
+
+    # Assert
+    assert use_case.received_customer_ids == [str(customer_id)]
+    assert result.should_ack is True
+    assert result.requeue is False
+    assert result.event is not None
+    assert result.event.event_type == "BOOKING_Ok"
 
 
 def test_When_RequestPayloadUsesInvalidUuid_Expect_DiscardedMessage() -> None:
@@ -109,10 +173,12 @@ def test_When_InvalidBookingId_Expect_DiscardedMessageAndLoggedError(
     assert result.should_ack is False
     assert result.requeue is False
     assert result.event is None
-    assert caplog.messages == [
+    assert len(caplog.messages) == 1
+    assert (
         "Discarding BookingCreated message due to contract validation failure: "
-        "bookingId must be a valid UUID"
-    ]
+        "bookingId must be a valid UUID payload="
+    ) in caplog.messages[0]
+    assert "bookingId': 'not-a-uuid'" in caplog.messages[0]
 
 
 def test_When_RequestPayloadUsesInvalidTimestamp_Expect_DiscardedMessage() -> None:
@@ -203,10 +269,12 @@ def test_When_UnexpectedEventType_Expect_DiscardedMessageAndLoggedError(
     assert result.should_ack is False
     assert result.requeue is False
     assert result.event is None
-    assert caplog.messages == [
+    assert len(caplog.messages) == 1
+    assert (
         "Discarding BookingCreated message due to contract validation failure: "
-        "Unsupported event type: CustomerValidationRequested"
-    ]
+        "Unsupported event type: CustomerValidationRequested payload="
+    ) in caplog.messages[0]
+    assert "eventType': 'CustomerValidationRequested'" in caplog.messages[0]
 
 
 def test_When_CustomerDoesNotExist_Expect_AckedInvalidResult() -> None:

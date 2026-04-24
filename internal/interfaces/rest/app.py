@@ -1,8 +1,10 @@
 import logging
 from functools import partial
+from typing import Any
 
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 from internal.application.commands.authenticate_customer import (
     AuthenticateCustomerCommand,
@@ -42,7 +44,6 @@ from internal.infrastructure.auth.bcrypt_password_hasher import BcryptPasswordHa
 from internal.infrastructure.auth.jwt_token_generator import JWTTokenGenerator
 from internal.infrastructure.config.settings import CustomerServiceSettings
 from internal.infrastructure.messaging.factory import create_event_publisher
-from internal.infrastructure.persistence.models import Base
 from internal.infrastructure.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
 )
@@ -200,11 +201,21 @@ def _configure_logging() -> None:
         logging.basicConfig(level=logging.INFO)
 
 
+def _verify_database_connection(session_factory: Any) -> None:
+    engine = session_factory.kw["bind"]
+    try:
+        with engine.connect():
+            return None
+    except SQLAlchemyError as error:
+        logger.exception("Customer service database connectivity check failed")
+        raise RuntimeError("Customer service database is unreachable") from error
+
+
 def create_app(settings: CustomerServiceSettings | None = None) -> FastAPI:
     _configure_logging()
     resolved_settings = settings or CustomerServiceSettings()
-    session_factory = create_session_factory(resolved_settings.database_url)
-    Base.metadata.create_all(bind=session_factory.kw["bind"])
+    session_factory = create_session_factory(resolved_settings.resolved_database_url)
+    _verify_database_connection(session_factory)
 
     repository = SqlAlchemyCustomerRepository(session_factory)
     password_hasher = BcryptPasswordHasher()
@@ -219,6 +230,7 @@ def create_app(settings: CustomerServiceSettings | None = None) -> FastAPI:
     )
     _register_exception_handlers(app)
     app.state.session_factory = session_factory
+    app.state.database_url = resolved_settings.resolved_database_url
     app.state.customer_repository = repository
     app.state.password_hasher = password_hasher
     app.state.token_generator = token_generator

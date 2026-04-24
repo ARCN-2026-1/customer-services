@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 from internal.application.usecases.validate_customer_for_reservation import (
     ValidateCustomerForReservation,
@@ -32,7 +33,7 @@ def build_worker_runtime(
     settings: CustomerServiceSettings | None = None,
 ) -> WorkerRuntime:
     resolved_settings = settings or CustomerServiceSettings()
-    session_factory = create_session_factory(resolved_settings.database_url)
+    session_factory = create_session_factory(resolved_settings.resolved_database_url)
     repository = SqlAlchemyCustomerRepository(session_factory)
     handler = CustomerValidationConsumer(ValidateCustomerForReservation(repository))
     event_publisher = create_event_publisher(resolved_settings)
@@ -50,7 +51,17 @@ def build_worker_runtime(
     )
 
 
+def _configure_logging() -> None:
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(level=logging.INFO)
+        return
+
+    root_logger.setLevel(logging.INFO)
+
+
 def main() -> None:
+    _configure_logging()
     runtime = build_worker_runtime()
     runtime.consumer.ensure_topology()
     runtime.consumer.start_consuming()
