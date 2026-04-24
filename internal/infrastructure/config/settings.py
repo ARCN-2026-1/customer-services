@@ -4,6 +4,11 @@ from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+ALEMBIC_INI_DEFAULT_DATABASE_URL = (
+    "mysql+pymysql://customer:secret@localhost:3306/customer_service?charset=utf8mb4"
+)
+
+
 class CustomerServiceSettings(BaseSettings):
     database_url: str | None = Field(
         default=None,
@@ -135,3 +140,14 @@ class CustomerServiceSettings(BaseSettings):
         extra="ignore",
         populate_by_name=True,
     )
+
+
+def resolve_alembic_database_url(configured_url: str | None) -> str:
+    if configured_url and configured_url != ALEMBIC_INI_DEFAULT_DATABASE_URL:
+        return configured_url
+
+    return CustomerServiceSettings().resolved_database_url
+
+
+def escape_for_alembic_config(database_url: str) -> str:
+    return database_url.replace("%", "%%")
