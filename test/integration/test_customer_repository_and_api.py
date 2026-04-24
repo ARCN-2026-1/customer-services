@@ -740,7 +740,7 @@ def test_When_RunningAlembicAgainstCustomerSchema_Expect_OnlyCustomerTables(
         ).scalar_one()
 
     # Assert
-    assert tables == ["alembic_version", "customers"]
+    assert tables == ["customer_alembic_version", "customers"]
     assert customer_table == "utf8mb4_0900_ai_ci"
     assert database_collation == "utf8mb4_0900_ai_ci"
     assert database_charset == "utf8mb4"

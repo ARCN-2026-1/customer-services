@@ -3,14 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from alembic.config import Config
 
+from alembic.config import Config
 from internal.infrastructure.config.settings import (
     ALEMBIC_INI_DEFAULT_DATABASE_URL,
     escape_for_alembic_config,
     resolve_alembic_database_url,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -48,9 +47,8 @@ def test_When_AlembicGetsExplicitSqlalchemyUrl_Expect_ItIsPreserved() -> None:
     assert resolved_url == explicit_url
 
 
-def test_When_SetMainOptionReceivesPercentEncodedUrl_Expect_ConfigInterpolationFails() -> (
-    None
-):
+def test_When_SetMainOptionReceivesPercentEncodedUrl_Expect_ConfigInterpolationFails(
+) -> None:
     # Arrange
     config = Config()
     runtime_url = (
@@ -63,9 +61,8 @@ def test_When_SetMainOptionReceivesPercentEncodedUrl_Expect_ConfigInterpolationF
         config.set_main_option("sqlalchemy.url", runtime_url)
 
 
-def test_When_UsingEscapedUrlInAlembicConfig_Expect_PercentEncodedUrlRoundTrips() -> (
-    None
-):
+def test_When_UsingEscapedUrlInAlembicConfig_Expect_PercentEncodedUrlRoundTrips(
+) -> None:
     # Arrange
     config = Config()
     runtime_url = (
@@ -80,9 +77,7 @@ def test_When_UsingEscapedUrlInAlembicConfig_Expect_PercentEncodedUrlRoundTrips(
     assert config.get_main_option("sqlalchemy.url") == runtime_url
 
 
-def test_When_ReadingAlembicEnv_Expect_ServiceScopedVersionTableConfiguredForOnlineAndOffline() -> (
-    None
-):
+def test_When_ReadingAlembicEnv_Expect_ServiceScopedVersionTableConfigured() -> None:
     # Arrange
     env_content = (REPO_ROOT / "alembic" / "env.py").read_text(encoding="utf-8")
 
