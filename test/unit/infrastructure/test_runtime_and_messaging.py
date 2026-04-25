@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 import consumer as consumer_module
@@ -154,6 +155,25 @@ def test_When_CustomerServiceRabbitMqUrlIsSet_Expect_ItOverridesDerivedRabbitMqU
     assert settings.resolved_rabbitmq_url == "amqp://guest:guest@localhost:5672/%2F"
 
 
+def test_When_LogLevelIsProvidedInEnvironment_Expect_SettingsNormalizeValue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    monkeypatch.setenv("CUSTOMER_SERVICE_LOG_LEVEL", "debug")
+
+    # Act
+    settings = CustomerServiceSettings()
+
+    # Assert
+    assert settings.log_level == "DEBUG"
+
+
+def test_When_LogLevelIsInvalid_Expect_SettingsValidationError() -> None:
+    # Act / Assert
+    with pytest.raises(ValidationError, match="log_level must be one of"):
+        CustomerServiceSettings(log_level="trace")
+
+
 def test_When_CreatingAppWithReachableMySql_Expect_StartsAfterConnectionCheck(
     monkeypatch,
 ) -> None:
@@ -237,6 +257,30 @@ def test_When_ConfiguringWorkerLoggingWithHandlers_Expect_RootLevelSetToInfo() -
 
     # Cleanup
     root_logger.setLevel(original_level)
+
+
+def test_When_ConfiguringWorkerLoggingAtDebugLevel_Expect_AllStandardLevelsVisible(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    caplog.set_level(logging.DEBUG)
+    settings = CustomerServiceSettings(log_level="DEBUG")
+    runtime_logger = logging.getLogger("customer.runtime.logging")
+
+    # Act
+    consumer_module._configure_logging(settings)
+    runtime_logger.debug("debug-visible")
+    runtime_logger.info("info-visible")
+    runtime_logger.warning("warning-visible")
+    runtime_logger.error("error-visible")
+    runtime_logger.critical("critical-visible")
+
+    # Assert
+    assert "debug-visible" in caplog.text
+    assert "info-visible" in caplog.text
+    assert "warning-visible" in caplog.text
+    assert "error-visible" in caplog.text
+    assert "critical-visible" in caplog.text
 
 
 def test_When_CreatingRabbitMqPublisherAndConsumer_Expect_SharedRabbitMqConfiguration(

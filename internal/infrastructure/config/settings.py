@@ -9,6 +9,10 @@ ALEMBIC_INI_DEFAULT_DATABASE_URL = (
 
 
 class CustomerServiceSettings(BaseSettings):
+    log_level: str = Field(
+        default="INFO",
+        validation_alias=AliasChoices("CUSTOMER_SERVICE_LOG_LEVEL", "LOG_LEVEL"),
+    )
     database_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("CUSTOMER_SERVICE_DATABASE_URL", "DATABASE_URL"),
@@ -101,6 +105,20 @@ class CustomerServiceSettings(BaseSettings):
                 "event_publisher_backend must be 'rabbitmq' or 'in-memory'"
             )
         return value
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        normalized_value = value.upper()
+        if normalized_value == "WARN":
+            normalized_value = "WARNING"
+
+        if normalized_value not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ValueError(
+                "log_level must be one of DEBUG, INFO, WARNING, ERROR, CRITICAL"
+            )
+
+        return normalized_value
 
     @field_validator(
         "rabbitmq_request_exchange_type",

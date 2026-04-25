@@ -17,13 +17,11 @@ def test_When_ReadingBaseCompose_Expect_DeployReadyRuntimeDefinition() -> None:
     assert "\n  customer-worker:" in compose_content
     assert not base_has_mysql_service
     assert not base_has_rabbitmq_service
-    assert "image: ${{ secrets.DOCKER_HUB_USERNAME }}/customer-service:latest" in (
-        compose_content
+    assert (
+        "image: ${CUSTOMER_SERVICE_IMAGE:-customer-service:latest}" in compose_content
     )
     assert 'command: ["uv", "run", "alembic", "upgrade", "head"]' in compose_content
-    assert 'command: ["uv", "run", "python", "run_customer_consumer.py"]' in (
-        compose_content
-    )
+    assert 'command: ["uv", "run", "python", "consumer.py"]' in compose_content
     assert "env_file:" in compose_content
     assert "- .env" in compose_content
     assert "restart: always" in compose_content

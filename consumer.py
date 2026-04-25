@@ -19,6 +19,8 @@ from internal.interfaces.messaging.customer_validation_consumer import (
     CustomerValidationConsumer,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class WorkerRuntime:
@@ -51,18 +53,35 @@ def build_worker_runtime(
     )
 
 
-def _configure_logging() -> None:
+def _configure_logging(settings: CustomerServiceSettings | None = None) -> None:
+    resolved_settings = settings or CustomerServiceSettings()
+    log_level = getattr(logging, resolved_settings.log_level)
     root_logger = logging.getLogger()
+
     if not root_logger.handlers:
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        )
         return
 
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(log_level)
+    for handler in root_logger.handlers:
+        handler.setLevel(log_level)
 
 
 def main() -> None:
     _configure_logging()
+    logger.info("Starting customer worker runtime")
     runtime = build_worker_runtime()
+    runtime_settings = getattr(runtime, "settings", None)
+    if runtime_settings is not None:
+        logger.debug(
+            "Customer worker messaging contract queue=%s exchange=%s routing_key=%s",
+            runtime_settings.rabbitmq_input_queue,
+            runtime_settings.rabbitmq_request_exchange,
+            runtime_settings.rabbitmq_request_routing_key,
+        )
     runtime.consumer.ensure_topology()
     runtime.consumer.start_consuming()
 

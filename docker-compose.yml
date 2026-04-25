@@ -2,8 +2,11 @@ version: "3.8"
 
 services:
   customer-api:
-    image: ${{ secrets.DOCKER_HUB_USERNAME }}/customer-service:latest
+    image: ${CUSTOMER_SERVICE_IMAGE:-customer-service:latest}
     container_name: customer-api
+    environment:
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
     ports:
       - "8001:8001"
     env_file:
@@ -11,16 +14,22 @@ services:
     restart: always
 
   customer-worker:
-    image: ${{ secrets.DOCKER_HUB_USERNAME }}/customer-service:latest
+    image: ${CUSTOMER_SERVICE_IMAGE:-customer-service:latest}
     container_name: customer-worker
-    command: ["uv", "run", "python", "run_customer_consumer.py"]
+    command: ["uv", "run", "python", "consumer.py"]
+    environment:
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
     env_file:
       - .env
     restart: always
 
   customer-migration:
-    image: ${{ secrets.DOCKER_HUB_USERNAME }}/customer-service:latest
+    image: ${CUSTOMER_SERVICE_IMAGE:-customer-service:latest}
     container_name: customer-migration
     command: ["uv", "run", "alembic", "upgrade", "head"]
+    environment:
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
     env_file:
       - .env

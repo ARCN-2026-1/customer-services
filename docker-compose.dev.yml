@@ -4,6 +4,8 @@ services:
       mysql:
         condition: service_healthy
     environment:
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
       CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND: rabbitmq
       MYSQL_HOST: mysql
       MYSQL_DATABASE: ${MYSQL_DATABASE:-customer_service}
@@ -25,6 +27,8 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
       CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND: rabbitmq
       MYSQL_HOST: mysql
       MYSQL_DATABASE: ${MYSQL_DATABASE:-customer_service}
@@ -48,6 +52,8 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
       CUSTOMER_SERVICE_EVENT_PUBLISHER_BACKEND: rabbitmq
       MYSQL_HOST: mysql
       MYSQL_DATABASE: ${MYSQL_DATABASE:-customer_service}

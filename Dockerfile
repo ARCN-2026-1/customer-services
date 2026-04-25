@@ -7,8 +7,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_SYSTEM_PYTHON=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV HOME=/tmp
+ENV UV_CACHE_DIR=/tmp/uv-cache
 
 WORKDIR /app
+
+RUN mkdir -p /tmp/uv-cache
 
 # Dependencias
 COPY pyproject.toml uv.lock ./
